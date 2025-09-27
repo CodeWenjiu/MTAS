@@ -3,5 +3,19 @@
 version = 4
 
 [[package]]
-name = "MTAS"
+name = "mtas-cli"
 version = "0.1.0"
+dependencies = [
+ "mtas-macro",
+]
+
+[[package]]
+name = "mtas-macro"
+version = "0.1.0"
+
+[[package]]
+name = "utils"
+version = "0.1.0"
+dependencies = [
+ "mtas-macro",
+]

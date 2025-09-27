@@ -1,6 +1,14 @@
-[package]
-name = "MTAS"
-version = "0.1.0"
-edition = "2024"
+[profile.release]
+codegen-units = 1
+lto           = true
+panic         = "abort"
+strip         = true
 
-[dependencies]
+[workspace]
+resolver = "2"
+members = [
+    "utils",
+    "mtas-cli", 
+    "mtas-macro", 
+]
+
