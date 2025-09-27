@@ -1,0 +1,22 @@
+{
+    ["tool_target_mtas-cli_windows_x64_cc"] = {
+        toolchain_info = {
+            cachekey = "clang_arch_x64_plat_windows",
+            arch = "x64",
+            name = "clang",
+            plat = "windows"
+        },
+        program = [[C:\Program Files\LLVM\bin\clang.exe]],
+        toolname = "clang"
+    },
+    ["tool_target_mtas-cli_windows_x64_cxx"] = {
+        toolchain_info = {
+            cachekey = "clang_arch_x64_plat_windows",
+            arch = "x64",
+            name = "clang",
+            plat = "windows"
+        },
+        program = [[C:\Program Files\LLVM\bin\clang.exe]],
+        toolname = "clang"
+    }
+}

@@ -519,6 +519,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtas-gui"
+version = "0.1.0"
+dependencies = [
+ "mtas-core",
+ "mtas-macro",
+]
+
+[[package]]
 name = "mtas-macro"
 version = "0.1.0"
 
@@ -526,6 +534,14 @@ version = "0.1.0"
 name = "mtas-platform"
 version = "0.1.0"
 dependencies = [
+ "mtas-macro",
+]
+
+[[package]]
+name = "mtas-tui"
+version = "0.1.0"
+dependencies = [
+ "mtas-core",
  "mtas-macro",
 ]
 

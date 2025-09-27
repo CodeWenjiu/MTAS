@@ -1,0 +1,5 @@
+target("mtas-cli")
+    set_kind("phony")
+    on_run(function ()
+        os.exec("cargo run --bin mtas-cli")
+    end)
