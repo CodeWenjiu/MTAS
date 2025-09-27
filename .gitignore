@@ -1,2 +1,3 @@
 /target
-.xmake/windows/x64
+.xmake
+.vscode
