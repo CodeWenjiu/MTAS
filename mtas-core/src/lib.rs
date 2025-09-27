@@ -15,6 +15,6 @@ pub fn test_connect() {
     use adb_client::ADBDeviceExt;
     let mut device = create_adb_device();
     device
-        .shell_command(&["df", "-h"], &mut std::io::stdout())
+        .shell_command(&["input", "tap", "500", "500"], &mut std::io::stdout())
         .expect("Failed to run shell on device");
 }
