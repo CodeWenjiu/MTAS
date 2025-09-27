@@ -13,3 +13,5 @@ members = [
     "mtas-platform", "mtas-core", "mtas-tui", "mtas-gui", 
 ]
 
+[workspace.dependencies]
+tokio = "1.47.1"

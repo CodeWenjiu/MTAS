@@ -10,11 +10,16 @@ pub fn create_adb_device() -> ADBTcpDevice {
     ADBTcpDevice::new(socket_addr).expect("Cannot find device")
 }
 
-#[test]
-pub fn test_connect() {
+#[cfg(test)]
+mod tests {
+    use super::*;
     use adb_client::ADBDeviceExt;
-    let mut device = create_adb_device();
-    device
-        .shell_command(&["input", "tap", "500", "500"], &mut std::io::stdout())
-        .expect("Failed to run shell on device");
+
+    #[test]
+    pub fn test_connect() {
+        let mut device = create_adb_device();
+        device
+            .shell_command(&["input", "tap", "1000", "500"], &mut std::io::stdout())
+            .expect("Failed to run shell on device");
+    }
 }
