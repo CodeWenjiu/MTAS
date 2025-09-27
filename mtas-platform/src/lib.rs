@@ -1,11 +1,11 @@
-use std::{fmt::Debug, net::Ipv4Addr};
+use std::{fmt::Debug, net::{IpAddr, Ipv4Addr}};
 
 pub enum Platform {
     MuMu,
 }
 
 pub struct PlatformADBInfo {
-    pub ip: Ipv4Addr,
+    pub ip: IpAddr,
     pub port: u16,
 }
 
@@ -16,10 +16,10 @@ impl Debug for PlatformADBInfo {
 }
 
 impl Platform {
-    pub fn adb_addr(&self) -> PlatformADBInfo {
+    pub fn adb_info(&self) -> PlatformADBInfo {
         match self {
             Platform::MuMu => PlatformADBInfo {
-                ip: Ipv4Addr::new(127, 0, 0, 1),
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 port: 16384,
             },
 

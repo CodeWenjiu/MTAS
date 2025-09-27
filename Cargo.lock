@@ -511,6 +511,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtas-core"
+version = "0.1.0"
+dependencies = [
+ "mtas-cli",
+ "mtas-macro",
+]
+
+[[package]]
 name = "mtas-macro"
 version = "0.1.0"
 
