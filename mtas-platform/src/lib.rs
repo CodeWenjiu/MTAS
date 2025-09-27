@@ -4,23 +4,23 @@ pub enum Platform {
     MuMu,
 }
 
-pub struct PlatformConnectInfo {
-    pub adb_ip: Ipv4Addr,
-    pub adb_port: u16,
+pub struct PlatformADBInfo {
+    pub ip: Ipv4Addr,
+    pub port: u16,
 }
 
-impl Debug for PlatformConnectInfo {
+impl Debug for PlatformADBInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.adb_ip, self.adb_port)
+        write!(f, "{}:{}", self.ip, self.port)
     }
 }
 
 impl Platform {
-    pub fn adb_addr(&self) -> PlatformConnectInfo {
+    pub fn adb_addr(&self) -> PlatformADBInfo {
         match self {
-            Platform::MuMu => PlatformConnectInfo {
-                adb_ip: Ipv4Addr::new(127, 0, 0, 1),
-                adb_port: 16384,
+            Platform::MuMu => PlatformADBInfo {
+                ip: Ipv4Addr::new(127, 0, 0, 1),
+                port: 16384,
             },
 
 
