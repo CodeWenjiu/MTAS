@@ -505,17 +505,17 @@ dependencies = [
 name = "mtas-cli"
 version = "0.1.0"
 dependencies = [
- "adb_client",
+ "mtas-core",
  "mtas-macro",
- "mtas-platform",
 ]
 
 [[package]]
 name = "mtas-core"
 version = "0.1.0"
 dependencies = [
- "mtas-cli",
+ "adb_client",
  "mtas-macro",
+ "mtas-platform",
 ]
 
 [[package]]
