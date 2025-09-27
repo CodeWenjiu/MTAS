@@ -7,8 +7,9 @@ strip         = true
 [workspace]
 resolver = "2"
 members = [
-    "utils",
+    "mtas-utils",
     "mtas-cli", 
     "mtas-macro", 
+    "mtas-platform", 
 ]
 
