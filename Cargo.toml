@@ -10,8 +10,12 @@ members = [
     "mtas-utils",
     "mtas-cli", 
     "mtas-macro", 
-    "mtas-platform", "mtas-core", "mtas-tui", "mtas-gui", 
+    "mtas-adb", 
+    "mtas-core", 
+    "mtas-tui", 
+    "mtas-gui", 
 ]
 
 [workspace.dependencies]
+anyhow = "1.0.100"
 tokio = "1.47.1"

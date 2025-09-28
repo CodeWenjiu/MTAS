@@ -6,5 +6,7 @@ license = "MIT"
 authors = [ "wenjiu <27843087979@qq.com>" ]
 
 [dependencies]
+mtas-adb = { path = "../mtas-adb" }
 mtas-core = { path = "../mtas-core" }
 mtas-macro = { path = "../mtas-macro" }
+tokio = { workspace = true, features = ["full"] }

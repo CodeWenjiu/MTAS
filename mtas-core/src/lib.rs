@@ -1,25 +1,29 @@
-use mtas_platform::Platform;
-use adb_client::ADBTcpDevice;
-use std::net::SocketAddr;
-
-pub fn create_adb_device() -> ADBTcpDevice {
-    let adb_info = Platform::MuMu.adb_info();
-
-    let socket_addr = SocketAddr::new(adb_info.ip, adb_info.port);
-
-    ADBTcpDevice::new(socket_addr).expect("Cannot find device")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use adb_client::ADBDeviceExt;
+    use mtas_adb::ADBDevice;
 
-    #[test]
-    pub fn test_connect() {
-        let mut device = create_adb_device();
-        device
-            .shell_command(&["input", "tap", "1000", "500"], &mut std::io::stdout())
-            .expect("Failed to run shell on device");
+    #[tokio::test]
+    async fn test_connect() -> Result<(), Box<dyn std::error::Error>> {
+        async fn test_command(tx: tokio::sync::mpsc::Sender<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
+            let command_to_send = vec![
+                "input".to_string(),
+                "tap".to_string(),
+                "2000".to_string(),
+                "500".to_string(),
+            ];
+            tx.send(command_to_send).await?;
+            drop(tx);
+            Ok(())
+        }
+
+        let adb = ADBDevice::new(mtas_adb::Platform::MuMu)?;
+
+        let (adb_task, tx) = adb.into_command_handler();
+
+        test_command(tx).await?;
+
+        adb_task.await??;
+
+        Ok(())
     }
 }
