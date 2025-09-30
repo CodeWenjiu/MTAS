@@ -64,8 +64,29 @@ impl ControllerTrait for MuMuController {
         match command {
             Command::Tab { x, y } => self.tab(x, y),
             Command::Scroll { x1, y1, x2, y2 } => self.scroll(x1, y1, x2, y2),
-            Command::ScreenCap => self.capture_screen(),
         }
+    }
+
+    fn capture_screen(&mut self) -> Result<()> {
+        let mut width = self.width as i32;
+        let mut height = self.height as i32;
+
+        let result = unsafe {
+            self.lib.nemu_capture_display(
+                self.connection,
+                0,
+                (self.screen_cap.len() * 4) as i32,
+                &mut width,
+                &mut height,
+                self.screen_cap.as_mut_ptr() as *mut u8,
+            )
+        };
+
+        if result != 0 {
+            return Err(anyhow!("Failed to capture display"));
+        }
+
+        Ok(())
     }
 }
 
@@ -110,28 +131,6 @@ impl MuMuController {
         if res_up != 0 {
             return Err(anyhow!("Failed to touch up"));
         }
-        Ok(())
-    }
-
-    fn capture_screen(&mut self) -> Result<()> {
-        let mut width = self.width as i32;
-        let mut height = self.height as i32;
-
-        let result = unsafe {
-            self.lib.nemu_capture_display(
-                self.connection,
-                0,
-                (self.screen_cap.len() * 4) as i32,
-                &mut width,
-                &mut height,
-                self.screen_cap.as_mut_ptr() as *mut u8,
-            )
-        };
-
-        if result != 0 {
-            return Err(anyhow!("Failed to capture display"));
-        }
-
         Ok(())
     }
 
