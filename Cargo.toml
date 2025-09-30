@@ -10,7 +10,7 @@ members = [
     "mtas-utils",
     "mtas-cli",
     "mtas-macro",
-    "mtas-controler",
+    "mtas-controller",
     "mtas-core",
     "mtas-tui",
     "mtas-gui",
