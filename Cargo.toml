@@ -8,12 +8,12 @@ strip         = true
 resolver = "2"
 members = [
     "mtas-utils",
-    "mtas-cli", 
-    "mtas-macro", 
-    "mtas-adb", 
-    "mtas-core", 
-    "mtas-tui", 
-    "mtas-gui", 
+    "mtas-cli",
+    "mtas-macro",
+    "mtas-controler",
+    "mtas-core",
+    "mtas-tui",
+    "mtas-gui",
 ]
 
 [workspace.dependencies]

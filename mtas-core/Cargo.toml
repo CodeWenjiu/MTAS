@@ -7,6 +7,6 @@ authors = [ "wenjiu <27843087979@qq.com>" ]
 
 [dependencies]
 mtas-macro = { path = "../mtas-macro" }
-mtas-adb = { path = "../mtas-adb" }
+mtas-controler = { path = "../mtas-controler" }
 anyhow = { workspace = true }
 tokio = { workspace = true }

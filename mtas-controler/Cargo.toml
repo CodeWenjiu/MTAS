@@ -1,0 +1,22 @@
+[package]
+name = "mtas-controler"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = [ "wenjiu <27843087979@qq.com>" ]
+
+[dependencies]
+mtas-macro = { path = "../mtas-macro" }
+tokio = { workspace = true, features = ["full"] }
+anyhow = { workspace = true }
+libloading = "0.8.9"
+image = "0.24"
+
+[build-dependencies]
+bindgen = "0.72.1"
+
+# I don't know if there is a better way
+[lints.rust]
+unsafe_op_in_unsafe_fn = "allow"
+non_camel_case_types = "allow"
+non_snake_case = "allow"
