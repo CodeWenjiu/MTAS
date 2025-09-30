@@ -10,8 +10,9 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 pub struct MuMuController {
     lib: test,
     connection: i32,
-    screen_size: (i32, i32),
-    screen_cap: Vec<u8>,
+    width: usize,
+    height: usize,
+    screen_cap: Vec<u32>,
 }
 
 impl ControllerTrait for MuMuController {
@@ -53,8 +54,9 @@ impl ControllerTrait for MuMuController {
         Ok(MuMuController {
             lib,
             connection,
-            screen_size: (width, height),
-            screen_cap: vec![0; (width * height * 4) as usize],
+            width: width as usize,
+            height: height as usize,
+            screen_cap: vec![0u32; (width * height) as usize],
         })
     }
 
@@ -112,17 +114,17 @@ impl MuMuController {
     }
 
     fn capture_screen(&mut self) -> Result<()> {
-        let mut width = self.screen_size.0;
-        let mut height = self.screen_size.1;
+        let mut width = self.width as i32;
+        let mut height = self.height as i32;
 
         let result = unsafe {
             self.lib.nemu_capture_display(
                 self.connection,
                 0,
-                self.screen_cap.len() as i32,
+                (self.screen_cap.len() * 4) as i32,
                 &mut width,
                 &mut height,
-                &mut self.screen_cap[0] as *mut u8,
+                self.screen_cap.as_mut_ptr() as *mut u8,
             )
         };
 
@@ -130,27 +132,28 @@ impl MuMuController {
             return Err(anyhow!("Failed to capture display"));
         }
 
-        // Save screenshot
-        self.save_screenshot("screenshot.png")?;
-
         Ok(())
     }
 
+    fn get_row(&self, y: usize) -> &[u32] {
+        let start = y * self.width;
+        &self.screen_cap[start..start + self.width]
+    }
+
+    #[allow(dead_code)]
     fn save_screenshot(&self, filename: &str) -> Result<()> {
-        let (width, height) = self.screen_size;
-        let row_size = (width * 4) as usize;
-        let mut data = self.screen_cap.clone();
-        // Flip the pixel data vertically in-place
-        let height_usize = height as usize;
-        for i in 0..(height_usize / 2) {
-            let start1 = i * row_size;
-            let start2 = (height_usize - 1 - i) * row_size;
-            let (left, right) = data.split_at_mut(start2);
-            left[start1..start1 + row_size].swap_with_slice(&mut right[0..row_size]);
+        let width = self.width as u32;
+        let height = self.height as u32;
+        let mut flipped = Vec::with_capacity(self.screen_cap.len());
+        for y in (0..self.height).rev() {
+            flipped.extend_from_slice(self.get_row(y));
         }
-        let img: ImageBuffer<Rgba<u8>, _> =
-            ImageBuffer::from_raw(width as u32, height as u32, data)
-                .ok_or_else(|| anyhow!("Failed to create image buffer"))?;
+        let data: Vec<u8> = flipped
+            .into_iter()
+            .flat_map(|pixel| pixel.to_le_bytes())
+            .collect();
+        let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, data)
+            .ok_or_else(|| anyhow!("Failed to create image buffer"))?;
         img.save(filename)
             .map_err(|e| anyhow!("Failed to save image: {}", e))?;
         Ok(())
@@ -165,6 +168,10 @@ impl Drop for MuMuController {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use tokio::time::Instant;
+
     use super::*;
 
     #[test]
@@ -173,7 +180,27 @@ mod tests {
 
         // controller.scroll(1000, 500, 500, 500)?;
         controller.capture_screen()?;
-        // controller.save_screenshot("screenshot.png")?;
+        controller.save_screenshot("screenshot.png")?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_capture_performance() -> Result<()> {
+        let mut controller = MuMuController::new()?;
+
+        let mut times = Vec::new();
+        for _ in 0..10 {
+            let start = Instant::now();
+            controller.capture_screen()?;
+            let elapsed = start.elapsed();
+            times.push(elapsed);
+        }
+
+        times.sort();
+        let trimmed = &times[1..9];
+        let total: Duration = trimmed.iter().sum();
+        println!("Total time for 8 captures: {:?}", total);
+
         Ok(())
     }
 }
