@@ -1,5 +1,7 @@
+use std::time::Duration;
+
 use crate::mumu::MuMuController;
-use anyhow::{Error, Result};
+use anyhow::Result;
 use tokio::{sync::mpsc, task};
 
 mtas_macro::mod_pub!(mumu);
@@ -21,13 +23,13 @@ impl Platform {
 }
 
 impl Controller {
-    pub fn execute(&mut self, command: Command) -> Result<()> {
+    fn execute(&mut self, command: Command) -> Result<Return> {
         match self {
             Controller::MuMu(controler) => controler.execute(command),
         }
     }
 
-    pub fn capture_screen(&mut self) -> Result<()> {
+    fn capture_screen(&mut self) -> Result<()> {
         match self {
             Controller::MuMu(controler) => controler.capture_screen(),
         }
@@ -36,20 +38,19 @@ impl Controller {
     pub fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<Command>,
-        error_tx: mpsc::Sender<Error>,
+        result_tx: mpsc::Sender<Result<Return, anyhow::Error>>,
     ) -> task::JoinHandle<()> {
         task::spawn_blocking(move || {
             let mut controller = self;
             loop {
                 match command_rx.try_recv() {
                     Ok(cmd) => {
-                        if let Err(e) = controller.execute(cmd) {
-                            let _ = error_tx.try_send(e);
-                        }
+                        let result = controller.execute(cmd);
+                        let _ = result_tx.try_send(result);
                     }
                     Err(mpsc::error::TryRecvError::Empty) => {
-                        if let Err(e) = controller.capture_screen() {
-                            let _ = error_tx.try_send(e);
+                        if let Err(err) = controller.capture_screen() {
+                            let _ = result_tx.try_send(Err(err));
                         }
                     }
                     Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -64,13 +65,20 @@ impl Controller {
 pub enum Command {
     Tab { x: i32, y: i32 },
     Scroll { x1: i32, y1: i32, x2: i32, y2: i32 },
+    TestScreenShotDelay,
+}
+
+#[derive(Debug)]
+pub enum Return {
+    Nothing,
+    Delay(Duration),
 }
 
 pub(crate) trait ControllerTrait {
     fn new() -> Result<Self>
     where
         Self: Sized;
-    fn execute(&mut self, command: Command) -> Result<()>;
+    fn execute(&mut self, command: Command) -> Result<Return>;
     fn capture_screen(&mut self) -> Result<()>;
 }
 
@@ -82,9 +90,9 @@ mod tests {
     async fn test_run_loop() {
         let controller = Platform::MuMu.new().unwrap();
         let (command_tx, command_rx) = mpsc::channel(10);
-        let (error_tx, mut error_rx) = mpsc::channel(10);
+        let (result_tx, mut result_rx) = mpsc::channel(10);
 
-        let handle = controller.run_loop(command_rx, error_tx);
+        let handle = controller.run_loop(command_rx, result_tx);
 
         // Send a command
         command_tx
@@ -93,8 +101,13 @@ mod tests {
             .unwrap();
 
         // Receive result
-        let result = error_rx.try_recv();
-        assert!(result.is_err());
+        let result = result_rx.recv().await.unwrap();
+        println!("{:?}", result);
+
+        command_tx.send(Command::TestScreenShotDelay).await.unwrap();
+
+        let result = result_rx.recv().await.unwrap();
+        println!("{:?}", result);
 
         // Close the command channel
         drop(command_tx);

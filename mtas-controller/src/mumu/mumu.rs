@@ -1,8 +1,9 @@
-use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
+use std::{ffi::OsStr, os::windows::ffi::OsStrExt, time::Duration};
 
-use crate::{Command, ControllerTrait};
+use crate::{Command, ControllerTrait, Return};
 use anyhow::{Result, anyhow};
 use image::{ImageBuffer, Rgba};
+use tokio::time::Instant;
 
 // Include the generated bindings
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
@@ -60,10 +61,11 @@ impl ControllerTrait for MuMuController {
         })
     }
 
-    fn execute(&mut self, command: crate::Command) -> Result<()> {
+    fn execute(&mut self, command: crate::Command) -> Result<Return> {
         match command {
             Command::Tab { x, y } => self.tab(x, y),
             Command::Scroll { x1, y1, x2, y2 } => self.scroll(x1, y1, x2, y2),
+            Command::TestScreenShotDelay => self.test_screen_shot_delay(),
         }
     }
 
@@ -91,7 +93,7 @@ impl ControllerTrait for MuMuController {
 }
 
 impl MuMuController {
-    fn tab(&mut self, x: i32, y: i32) -> Result<()> {
+    fn tab(&mut self, x: i32, y: i32) -> Result<Return> {
         let result_down = unsafe {
             self.lib
                 .nemu_input_event_touch_down(self.connection, 0, x, y)
@@ -105,10 +107,10 @@ impl MuMuController {
             return Err(anyhow!("Failed to touch up"));
         }
 
-        Ok(())
+        Ok(Return::Nothing)
     }
 
-    fn scroll(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> Result<()> {
+    fn scroll(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> Result<Return> {
         let res_down = unsafe {
             self.lib
                 .nemu_input_event_finger_touch_down(self.connection, 0, 1, x1, y1)
@@ -131,7 +133,25 @@ impl MuMuController {
         if res_up != 0 {
             return Err(anyhow!("Failed to touch up"));
         }
-        Ok(())
+
+        Ok(Return::Nothing)
+    }
+
+    fn test_screen_shot_delay(&mut self) -> Result<Return> {
+        let mut times = Vec::new();
+        for _ in 0..10 {
+            let start = Instant::now();
+            self.capture_screen()?;
+            let elapsed = start.elapsed();
+            times.push(elapsed);
+        }
+
+        times.sort();
+        let trimmed = &times[1..9];
+        let total: Duration = trimmed.iter().sum();
+        let ave = total / trimmed.len() as u32;
+
+        Ok(Return::Delay(ave))
     }
 
     fn get_row(&self, y: usize) -> &[u32] {
@@ -167,10 +187,6 @@ impl Drop for MuMuController {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
-    use tokio::time::Instant;
-
     use super::*;
 
     #[test]
@@ -187,18 +203,12 @@ mod tests {
     fn test_capture_performance() -> Result<()> {
         let mut controller = MuMuController::new()?;
 
-        let mut times = Vec::new();
-        for _ in 0..10 {
-            let start = Instant::now();
-            controller.capture_screen()?;
-            let elapsed = start.elapsed();
-            times.push(elapsed);
-        }
-
-        times.sort();
-        let trimmed = &times[1..9];
-        let total: Duration = trimmed.iter().sum();
-        println!("Total time for 8 captures: {:?}", total);
+        let ave = if let Ok(Return::Delay(d)) = controller.test_screen_shot_delay() {
+            d
+        } else {
+            panic!("Failed to get delay");
+        };
+        println!("Total time for 8 captures: {:?}", ave);
 
         Ok(())
     }
