@@ -3,7 +3,10 @@ use std::{path::PathBuf, time::Duration};
 use crate::mumu::MuMuController;
 use anyhow::{Result, anyhow};
 use image::{ImageBuffer, Rgba};
-use tokio::{sync::mpsc, task};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task,
+};
 use triple_buffer::Output;
 
 mtas_macro::mod_pub!(mumu);
@@ -40,25 +43,21 @@ impl Controller {
         }
     }
 
-    fn run_loop(
-        self,
-        mut command_rx: mpsc::Receiver<Command>,
-        result_tx: mpsc::Sender<Result<Return, anyhow::Error>>,
-    ) {
+    fn run_loop(self, mut request_rx: mpsc::Receiver<(Command, oneshot::Sender<Result<Return>>)>) {
         task::spawn(async move {
             let mut controller = self;
             let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(16));
 
             'main_loop: loop {
                 tokio::select! {
-                    cmd = command_rx.recv() => {
-                        match cmd {
-                            Some(command) => {
+                    request = request_rx.recv() => {
+                        match request {
+                            Some((command, result_tx)) => {
                                 let result = controller.execute(command).await;
-                                result_tx.send(result).await.expect("WTF");
+                                let _ = result_tx.send(result);
                             }
                             None => {
-                                println!("Command channel fully disconnected, exiting run_loop");
+                                println!("Request channel fully disconnected, exiting run_loop");
                                 break 'main_loop;
                             }
                         }
@@ -118,29 +117,27 @@ pub(crate) trait ControllerTrait {
 }
 
 pub struct ControllerShell {
-    command_tx: mpsc::Sender<Command>,
-    result_rx: mpsc::Receiver<Result<Return>>,
+    request_tx: mpsc::Sender<(Command, oneshot::Sender<Result<Return>>)>,
     screen_capture: ScreenCapture,
 }
 
 impl ControllerShell {
     pub fn new(pla: Platform) -> Result<Self> {
         let (controller, screen_capture) = pla.new()?;
-        let (command_tx, command_rx) = mpsc::channel(10);
-        let (result_tx, result_rx) = mpsc::channel(10);
+        let (request_tx, request_rx) = mpsc::channel(10);
 
-        controller.run_loop(command_rx, result_tx);
+        controller.run_loop(request_rx);
 
         Ok(Self {
-            command_tx,
-            result_rx,
+            request_tx,
             screen_capture,
         })
     }
 
     pub async fn execute(&mut self, command: Command) -> Result<Return> {
-        self.command_tx.send(command).await?;
-        self.result_rx.recv().await.expect("WTF")
+        let (result_tx, result_rx) = oneshot::channel();
+        self.request_tx.send((command, result_tx)).await?;
+        result_rx.await.expect("Controller task has crashed")
     }
 
     pub fn save_screen(&mut self, path: PathBuf) -> Result<()> {
