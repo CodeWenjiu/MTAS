@@ -15,7 +15,7 @@ pub enum Controller {
 }
 
 impl Platform {
-    pub fn new(&self) -> Result<Controller> {
+    fn new(&self) -> Result<Controller> {
         match self {
             Platform::MuMu => Ok(Controller::MuMu(MuMuController::new()?)),
         }
@@ -35,11 +35,11 @@ impl Controller {
         }
     }
 
-    pub fn run_loop(
+    fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<Command>,
         result_tx: mpsc::Sender<Result<Return, anyhow::Error>>,
-    ) -> task::JoinHandle<()> {
+    ) {
         task::spawn_blocking(move || {
             let mut controller = self;
             loop {
@@ -58,7 +58,7 @@ impl Controller {
                     }
                 }
             }
-        })
+        });
     }
 }
 
@@ -93,31 +93,49 @@ pub(crate) trait ControllerTrait {
     fn capture_screen(&mut self) -> Result<()>;
 }
 
+pub struct ControllerShell {
+    command_tx: mpsc::Sender<Command>,
+    result_rx: mpsc::Receiver<Result<Return>>,
+}
+
+impl ControllerShell {
+    pub fn new(pla: Platform) -> Result<Self> {
+        let controller = pla.new()?;
+        let (command_tx, command_rx) = mpsc::channel(10);
+        let (result_tx, result_rx) = mpsc::channel(10);
+
+        controller.run_loop(command_rx, result_tx);
+
+        Ok(Self {
+            command_tx,
+            result_rx,
+        })
+    }
+
+    pub async fn execute(&mut self, command: Command) -> Result<Return> {
+        self.command_tx.send(command).await?;
+        self.result_rx.recv().await.expect("WTF")
+    }
+}
+
+pub fn controller(pla: Platform) -> Result<ControllerShell> {
+    ControllerShell::new(pla)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn test_run_loop() -> Result<()> {
-        let controller = Platform::MuMu.new()?;
-        let (command_tx, command_rx) = mpsc::channel(10);
-        let (result_tx, mut result_rx) = mpsc::channel(10);
+        let mut controller = controller(Platform::MuMu)?;
 
-        let handle = controller.run_loop(command_rx, result_tx);
-
-        // command_tx.send(Command::Tab { x: 200, y: 1000 }).await?;
-        // let result = result_rx.recv().await.unwrap();
-        // println!("{:?}", result);
-
-        command_tx
-            .send(Command::TestScreenShotDelay { iterations: 100 })
-            .await?;
-        let result = result_rx.recv().await.unwrap();
-        println!("{:?}", result);
-
-        drop(command_tx);
-
-        handle.await?;
+        println!(
+            "{:?}",
+            controller
+                .execute(Command::TestScreenShotDelay { iterations: 100 })
+                .await?
+        );
 
         Ok(())
     }
