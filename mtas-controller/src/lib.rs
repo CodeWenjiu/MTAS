@@ -1,8 +1,10 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use crate::mumu::MuMuController;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use image::{ImageBuffer, Rgba};
 use tokio::{sync::mpsc, task};
+use triple_buffer::Output;
 
 mtas_macro::mod_pub!(mumu);
 
@@ -15,9 +17,12 @@ pub enum Controller {
 }
 
 impl Platform {
-    fn new(&self) -> Result<Controller> {
+    fn new(&self) -> Result<(Controller, ScreenCapture)> {
         match self {
-            Platform::MuMu => Ok(Controller::MuMu(MuMuController::new()?)),
+            Platform::MuMu => {
+                let (controller, screen_capture) = MuMuController::new()?;
+                Ok((Controller::MuMu(controller), screen_capture))
+            }
         }
     }
 }
@@ -74,9 +79,18 @@ pub enum Command {
         y2: i32,
         t: Duration,
     },
+    ControlScreenCapture {
+        start: bool,
+    },
     TestScreenShotDelay {
         iterations: usize,
     },
+}
+
+pub struct ScreenCapture {
+    pub height: usize,
+    pub width: usize,
+    pub capture: Output<Vec<u32>>,
 }
 
 #[derive(Debug)]
@@ -86,7 +100,7 @@ pub enum Return {
 }
 
 pub(crate) trait ControllerTrait {
-    fn new() -> Result<Self>
+    fn new() -> Result<(Self, ScreenCapture)>
     where
         Self: Sized;
     fn execute(&mut self, command: Command) -> Result<Return>;
@@ -96,11 +110,12 @@ pub(crate) trait ControllerTrait {
 pub struct ControllerShell {
     command_tx: mpsc::Sender<Command>,
     result_rx: mpsc::Receiver<Result<Return>>,
+    screen_capture: ScreenCapture,
 }
 
 impl ControllerShell {
     pub fn new(pla: Platform) -> Result<Self> {
-        let controller = pla.new()?;
+        let (controller, screen_capture) = pla.new()?;
         let (command_tx, command_rx) = mpsc::channel(10);
         let (result_tx, result_rx) = mpsc::channel(10);
 
@@ -109,12 +124,34 @@ impl ControllerShell {
         Ok(Self {
             command_tx,
             result_rx,
+            screen_capture,
         })
     }
 
     pub async fn execute(&mut self, command: Command) -> Result<Return> {
         self.command_tx.send(command).await?;
         self.result_rx.recv().await.expect("WTF")
+    }
+
+    pub fn save_screen(&mut self, path: PathBuf) -> Result<()> {
+        let width = self.screen_capture.width;
+        let height = self.screen_capture.height;
+        let screen_output = self.screen_capture.capture.read();
+        let mut flipped = Vec::with_capacity(screen_output.len());
+        for y in (0..height).rev() {
+            let start = y * width;
+            flipped.extend_from_slice(&screen_output[start..start + width]);
+        }
+        let data: Vec<u8> = flipped
+            .into_iter()
+            .flat_map(|pixel| pixel.to_le_bytes())
+            .collect();
+        let img: ImageBuffer<Rgba<u8>, _> =
+            ImageBuffer::from_raw(width as u32, height as u32, data)
+                .ok_or_else(|| anyhow!("Failed to create image buffer"))?;
+        img.save(path)
+            .map_err(|e| anyhow!("Failed to save image: {}", e))?;
+        Ok(())
     }
 }
 
@@ -124,6 +161,8 @@ pub fn controller(pla: Platform) -> Result<ControllerShell> {
 
 #[cfg(test)]
 mod tests {
+    use tokio::time::sleep;
+
     use super::*;
 
     #[tokio::test]
@@ -136,6 +175,21 @@ mod tests {
                 .execute(Command::TestScreenShotDelay { iterations: 100 })
                 .await?
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_capture_screen() -> Result<()> {
+        let mut controller = controller(Platform::MuMu)?;
+
+        let _ = controller
+            .execute(Command::ControlScreenCapture { start: true })
+            .await?;
+
+        sleep(Duration::from_millis(500)).await; // wait for auto screen_cap finished
+
+        controller.save_screen("./screenshot.png".into())?;
 
         Ok(())
     }

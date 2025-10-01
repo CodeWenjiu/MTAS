@@ -1,12 +1,10 @@
 use std::{ffi::OsStr, os::windows::ffi::OsStrExt, time::Duration};
 
-use crate::{Command, ControllerTrait, Return};
+use crate::{Command, ControllerTrait, Return, ScreenCapture};
 use anyhow::{Result, anyhow};
-use image::{ImageBuffer, Rgba};
 use tokio::time::Instant;
 use triple_buffer::triple_buffer;
 
-// Include the generated bindings
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 pub struct MuMuController {
@@ -14,14 +12,12 @@ pub struct MuMuController {
     connection: i32,
     width: usize,
     height: usize,
-    screen_cap: (
-        triple_buffer::Input<Vec<u32>>,
-        triple_buffer::Output<Vec<u32>>,
-    ),
+    screen_on: bool,
+    screen_cap: triple_buffer::Input<Vec<u32>>,
 }
 
 impl ControllerTrait for MuMuController {
-    fn new() -> Result<Self> {
+    fn new() -> Result<(Self, ScreenCapture)> {
         let lib = unsafe {
             test::new("D:\\Program\\mumu\\MuMu Player 12\\nx_device\\12.0\\shell\\sdk\\external_renderer_ipc.dll")
                         .map_err(|e| anyhow!("Failed to load DLL: {}", e))?
@@ -56,30 +52,45 @@ impl ControllerTrait for MuMuController {
             return Err(anyhow!("Failed to get display size"));
         }
 
-        let screen_cap = triple_buffer(&vec![0u32; (width * height) as usize]);
+        let (input_buffer, output_buffer) = triple_buffer(&vec![0u32; (width * height) as usize]);
 
-        Ok(MuMuController {
-            lib,
-            connection,
+        let screen_capture = ScreenCapture {
             width: width as usize,
             height: height as usize,
-            screen_cap,
-        })
+            capture: output_buffer,
+        };
+
+        Ok((
+            MuMuController {
+                lib,
+                connection,
+                width: width as usize,
+                height: height as usize,
+                screen_on: false,
+                screen_cap: input_buffer,
+            },
+            screen_capture,
+        ))
     }
 
     fn execute(&mut self, command: crate::Command) -> Result<Return> {
         match command {
             Command::Tab { x, y } => self.tab(x, y),
             Command::Scroll { x1, y1, x2, y2, t } => self.scroll(x1, y1, x2, y2, t),
+            Command::ControlScreenCapture { start } => self.control_screen_capture(start),
             Command::TestScreenShotDelay { iterations } => self.test_screen_shot_delay(iterations),
         }
     }
 
     fn capture_screen(&mut self) -> Result<()> {
+        if !self.screen_on {
+            return Ok(());
+        }
+
         let mut width = self.width as i32;
         let mut height = self.height as i32;
 
-        let screen_input = &mut self.screen_cap.0;
+        let screen_input = &mut self.screen_cap;
 
         let result = unsafe {
             self.lib.nemu_capture_display(
@@ -153,6 +164,13 @@ impl MuMuController {
         Ok(Return::Nothing)
     }
 
+    fn control_screen_capture(&mut self, start: bool) -> Result<Return> {
+        println!("Change Once");
+        self.screen_on = start;
+
+        Ok(Return::Nothing)
+    }
+
     fn test_screen_shot_delay(&mut self, iterations: usize) -> Result<Return> {
         let mut times = Vec::new();
         for _ in 0..iterations {
@@ -171,27 +189,6 @@ impl MuMuController {
 
         Ok(Return::Delay(ave))
     }
-
-    #[allow(dead_code)]
-    fn save_screenshot(&mut self, filename: &str) -> Result<()> {
-        let width = self.width as u32;
-        let height = self.height as u32;
-        let screen_output = self.screen_cap.1.read();
-        let mut flipped = Vec::with_capacity(screen_output.len());
-        for y in (0..self.height).rev() {
-            let start = y * self.width;
-            flipped.extend_from_slice(&screen_output[start..start + self.width]);
-        }
-        let data: Vec<u8> = flipped
-            .into_iter()
-            .flat_map(|pixel| pixel.to_le_bytes())
-            .collect();
-        let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, data)
-            .ok_or_else(|| anyhow!("Failed to create image buffer"))?;
-        img.save(filename)
-            .map_err(|e| anyhow!("Failed to save image: {}", e))?;
-        Ok(())
-    }
 }
 
 impl Drop for MuMuController {
@@ -206,11 +203,11 @@ mod tests {
 
     #[test]
     fn test_mumu_init() -> Result<()> {
-        let mut controller = MuMuController::new()?;
+        let (mut controller, _screen_cap) = MuMuController::new()?;
 
         // controller.scroll(1000, 500, 500, 500)?;
         controller.capture_screen()?;
-        controller.save_screenshot("screenshot.png")?;
+
         Ok(())
     }
 }
