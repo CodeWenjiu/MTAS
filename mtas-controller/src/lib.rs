@@ -76,6 +76,7 @@ impl Controller {
     }
 }
 
+#[derive(Clone)]
 pub enum Command {
     Tab {
         x: i32,
@@ -170,7 +171,7 @@ pub fn controller(pla: Platform) -> Result<ControllerShell> {
 
 #[cfg(test)]
 mod tests {
-    use tokio::time::sleep;
+    use tokio::time::{Instant, sleep};
 
     use super::*;
 
@@ -207,6 +208,72 @@ mod tests {
         sleep(Duration::from_millis(500)).await; // wait for auto screen_cap finished
 
         controller.save_screen("./screenshot.png".into())?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_command_sequence_performance() -> Result<()> {
+        let mut controller = controller(Platform::MuMu)?;
+
+        let commands = vec![
+            Command::Tab { x: 100, y: 100 },
+            Command::Tab { x: 200, y: 200 },
+            Command::Scroll {
+                x1: 100,
+                y1: 500,
+                x2: 100,
+                y2: 200,
+                t: Duration::from_millis(100),
+            },
+            Command::Tab { x: 300, y: 300 },
+            Command::Tab { x: 400, y: 400 },
+            Command::Scroll {
+                x1: 100,
+                y1: 500,
+                x2: 100,
+                y2: 200,
+                t: Duration::from_millis(100),
+            },
+            Command::Tab { x: 150, y: 150 },
+            Command::Tab { x: 250, y: 250 },
+            Command::Scroll {
+                x1: 100,
+                y1: 500,
+                x2: 100,
+                y2: 200,
+                t: Duration::from_millis(100),
+            },
+            Command::Tab { x: 350, y: 350 },
+        ];
+
+        // --- 1. Benchmark without screen capture ---
+        controller
+            .execute(Command::ControlScreenCapture { start: false })
+            .await?;
+        sleep(Duration::from_millis(100)).await;
+
+        let start_no_capture = Instant::now();
+        for cmd in &commands {
+            controller.execute(cmd.clone()).await?;
+        }
+        let duration_no_capture = start_no_capture.elapsed();
+        println!("\n--- Performance Test Results ---");
+        println!("Without screen capture: {:?}", duration_no_capture);
+
+        // --- 2. Benchmark with screen capture ---
+        controller
+            .execute(Command::ControlScreenCapture { start: true })
+            .await?;
+        sleep(Duration::from_millis(100)).await;
+
+        let start_with_capture = Instant::now();
+        for cmd in &commands {
+            controller.execute(cmd.clone()).await?;
+        }
+        let duration_with_capture = start_with_capture.elapsed();
+        println!("With screen capture:    {:?}", duration_with_capture);
+        println!("------------------------------\n");
 
         Ok(())
     }
