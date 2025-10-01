@@ -10,3 +10,4 @@ mtas-controller = { path = "../mtas-controller" }
 mtas-core = { path = "../mtas-core" }
 mtas-macro = { path = "../mtas-macro" }
 tokio = { workspace = true, features = ["full"] }
+anyhow = { workspace = true }

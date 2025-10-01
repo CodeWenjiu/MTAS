@@ -868,6 +868,7 @@ dependencies = [
 name = "mtas-cli"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "mtas-controller",
  "mtas-core",
  "mtas-macro",
