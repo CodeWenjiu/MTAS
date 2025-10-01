@@ -63,9 +63,20 @@ impl Controller {
 }
 
 pub enum Command {
-    Tab { x: i32, y: i32 },
-    Scroll { x1: i32, y1: i32, x2: i32, y2: i32 },
-    TestScreenShotDelay,
+    Tab {
+        x: i32,
+        y: i32,
+    },
+    Scroll {
+        x1: i32,
+        y1: i32,
+        x2: i32,
+        y2: i32,
+        t: Duration,
+    },
+    TestScreenShotDelay {
+        iterations: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -87,32 +98,27 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_run_loop() {
-        let controller = Platform::MuMu.new().unwrap();
+    async fn test_run_loop() -> Result<()> {
+        let controller = Platform::MuMu.new()?;
         let (command_tx, command_rx) = mpsc::channel(10);
         let (result_tx, mut result_rx) = mpsc::channel(10);
 
         let handle = controller.run_loop(command_rx, result_tx);
 
-        // Send a command
+        // command_tx.send(Command::Tab { x: 200, y: 1000 }).await?;
+        // let result = result_rx.recv().await.unwrap();
+        // println!("{:?}", result);
+
         command_tx
-            .send(Command::Tab { x: 200, y: 1000 })
-            .await
-            .unwrap();
-
-        // Receive result
+            .send(Command::TestScreenShotDelay { iterations: 100 })
+            .await?;
         let result = result_rx.recv().await.unwrap();
         println!("{:?}", result);
 
-        command_tx.send(Command::TestScreenShotDelay).await.unwrap();
-
-        let result = result_rx.recv().await.unwrap();
-        println!("{:?}", result);
-
-        // Close the command channel
         drop(command_tx);
 
-        // Wait for the loop to finish
-        handle.await.unwrap();
+        handle.await?;
+
+        Ok(())
     }
 }

@@ -11,9 +11,11 @@ tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true }
 libloading = "0.8.9"
 image = "0.25"
+triple_buffer = "8.1.1"
 
 [build-dependencies]
 bindgen = "0.72.1"
+minifb = "0.28.0"
 
 # I don't know if there is a better way
 [lints.rust]

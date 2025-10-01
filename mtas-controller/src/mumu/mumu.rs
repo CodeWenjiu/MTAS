@@ -4,6 +4,7 @@ use crate::{Command, ControllerTrait, Return};
 use anyhow::{Result, anyhow};
 use image::{ImageBuffer, Rgba};
 use tokio::time::Instant;
+use triple_buffer::triple_buffer;
 
 // Include the generated bindings
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
@@ -13,7 +14,10 @@ pub struct MuMuController {
     connection: i32,
     width: usize,
     height: usize,
-    screen_cap: Vec<u32>,
+    screen_cap: (
+        triple_buffer::Input<Vec<u32>>,
+        triple_buffer::Output<Vec<u32>>,
+    ),
 }
 
 impl ControllerTrait for MuMuController {
@@ -52,20 +56,22 @@ impl ControllerTrait for MuMuController {
             return Err(anyhow!("Failed to get display size"));
         }
 
+        let screen_cap = triple_buffer(&vec![0u32; (width * height) as usize]);
+
         Ok(MuMuController {
             lib,
             connection,
             width: width as usize,
             height: height as usize,
-            screen_cap: vec![0u32; (width * height) as usize],
+            screen_cap,
         })
     }
 
     fn execute(&mut self, command: crate::Command) -> Result<Return> {
         match command {
             Command::Tab { x, y } => self.tab(x, y),
-            Command::Scroll { x1, y1, x2, y2 } => self.scroll(x1, y1, x2, y2),
-            Command::TestScreenShotDelay => self.test_screen_shot_delay(),
+            Command::Scroll { x1, y1, x2, y2, t } => self.scroll(x1, y1, x2, y2, t),
+            Command::TestScreenShotDelay { iterations } => self.test_screen_shot_delay(iterations),
         }
     }
 
@@ -73,20 +79,28 @@ impl ControllerTrait for MuMuController {
         let mut width = self.width as i32;
         let mut height = self.height as i32;
 
+        let screen_input = &mut self.screen_cap.0;
+
         let result = unsafe {
             self.lib.nemu_capture_display(
                 self.connection,
                 0,
-                (self.screen_cap.len() * 4) as i32,
+                (width * height * 4) as i32,
                 &mut width,
                 &mut height,
-                self.screen_cap.as_mut_ptr() as *mut u8,
+                screen_input.input_buffer_mut().as_mut_ptr() as *mut u8,
             )
         };
+
+        if width != self.width as i32 || height != self.height as i32 {
+            panic!("Display size changed");
+        }
 
         if result != 0 {
             return Err(anyhow!("Failed to capture display"));
         }
+
+        screen_input.publish();
 
         Ok(())
     }
@@ -110,7 +124,9 @@ impl MuMuController {
         Ok(Return::Nothing)
     }
 
-    fn scroll(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> Result<Return> {
+    fn scroll(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, t: Duration) -> Result<Return> {
+        let _ = t; // Ignore the duration for now
+
         let res_down = unsafe {
             self.lib
                 .nemu_input_event_finger_touch_down(self.connection, 0, 1, x1, y1)
@@ -137,35 +153,34 @@ impl MuMuController {
         Ok(Return::Nothing)
     }
 
-    fn test_screen_shot_delay(&mut self) -> Result<Return> {
+    fn test_screen_shot_delay(&mut self, iterations: usize) -> Result<Return> {
         let mut times = Vec::new();
-        for _ in 0..10 {
+        for _ in 0..iterations {
             let start = Instant::now();
             self.capture_screen()?;
             let elapsed = start.elapsed();
             times.push(elapsed);
         }
 
+        let bias = iterations / 10;
+
         times.sort();
-        let trimmed = &times[1..9];
+        let trimmed = &times[bias..(iterations - bias)];
         let total: Duration = trimmed.iter().sum();
         let ave = total / trimmed.len() as u32;
 
         Ok(Return::Delay(ave))
     }
 
-    fn get_row(&self, y: usize) -> &[u32] {
-        let start = y * self.width;
-        &self.screen_cap[start..start + self.width]
-    }
-
     #[allow(dead_code)]
-    fn save_screenshot(&self, filename: &str) -> Result<()> {
+    fn save_screenshot(&mut self, filename: &str) -> Result<()> {
         let width = self.width as u32;
         let height = self.height as u32;
-        let mut flipped = Vec::with_capacity(self.screen_cap.len());
+        let screen_output = self.screen_cap.1.read();
+        let mut flipped = Vec::with_capacity(screen_output.len());
         for y in (0..self.height).rev() {
-            flipped.extend_from_slice(self.get_row(y));
+            let start = y * self.width;
+            flipped.extend_from_slice(&screen_output[start..start + self.width]);
         }
         let data: Vec<u8> = flipped
             .into_iter()
@@ -196,20 +211,6 @@ mod tests {
         // controller.scroll(1000, 500, 500, 500)?;
         controller.capture_screen()?;
         controller.save_screenshot("screenshot.png")?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_capture_performance() -> Result<()> {
-        let mut controller = MuMuController::new()?;
-
-        let ave = if let Ok(Return::Delay(d)) = controller.test_screen_shot_delay() {
-            d
-        } else {
-            panic!("Failed to get delay");
-        };
-        println!("Total time for 8 captures: {:?}", ave);
-
         Ok(())
     }
 }
