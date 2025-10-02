@@ -35,7 +35,7 @@ pub struct MuMuController {
     width: usize,
     height: usize,
     screen_on: bool,
-    screen_cap: TakeWrapper<triple_buffer::Input<Vec<u32>>>,
+    screen_cap: TakeWrapper<triple_buffer::Input<Vec<u8>>>,
 }
 
 impl ControllerTrait for MuMuController {
@@ -74,7 +74,8 @@ impl ControllerTrait for MuMuController {
             return Err(anyhow!("Failed to get display size"));
         }
 
-        let (input_buffer, output_buffer) = triple_buffer(&vec![0u32; (width * height) as usize]);
+        let (input_buffer, output_buffer) =
+            triple_buffer(&vec![0u8; (width * height * 4) as usize]);
 
         let screen_capture = ScreenCapture {
             width: width as usize,
@@ -117,7 +118,7 @@ impl ControllerTrait for MuMuController {
         let connection = self.connection;
         let lib = self.lib.clone();
 
-        let screen_input = spawn_blocking(move || -> Result<triple_buffer::Input<Vec<u32>>> {
+        let screen_input = spawn_blocking(move || -> Result<triple_buffer::Input<Vec<u8>>> {
             let mut cur_width = width;
             let mut cur_height = height;
             let mut screen_input = screen_input;

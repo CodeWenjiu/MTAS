@@ -97,7 +97,7 @@ pub enum Command {
 pub struct ScreenCapture {
     pub height: usize,
     pub width: usize,
-    pub capture: Output<Vec<u32>>,
+    pub capture: Output<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -139,16 +139,19 @@ impl ControllerShell {
     }
 
     #[allow(dead_code)]
-    fn get_flipped_screen(&mut self) -> Vec<u32> {
+    fn get_flipped_screen(&mut self) -> Vec<u8> {
         let screen_cap = &mut self.screen_capture;
         let width = screen_cap.width;
         let height = screen_cap.height;
         let screen_output = screen_cap.capture.read();
 
+        let bytes_per_pixel = 4;
+        let stride = width * bytes_per_pixel; // The number of bytes in a row
+
         let mut flipped = Vec::with_capacity(screen_output.len());
         for y in (0..height).rev() {
-            let start = y * width;
-            flipped.extend_from_slice(&screen_output[start..start + width]);
+            let start = y * stride;
+            flipped.extend_from_slice(&screen_output[start..start + stride]);
         }
         flipped
     }
@@ -206,16 +209,10 @@ mod tests {
         let mut screen_cap = controller.screen_capture;
         let width = screen_cap.width;
         let height = screen_cap.height;
-        let img = screen_cap.capture.read();
+        let img = screen_cap.capture.read().clone();
 
-        let data: Vec<u8> = img
-            .into_iter()
-            .flat_map(|pixel| pixel.to_le_bytes())
-            .collect();
-
-        let img: ImageBuffer<Rgba<u8>, _> =
-            ImageBuffer::from_raw(width as u32, height as u32, data)
-                .ok_or_else(|| anyhow!("Failed to create image buffer"))?;
+        let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width as u32, height as u32, img)
+            .ok_or_else(|| anyhow!("Failed to create image buffer"))?;
 
         img.save("./screenshot.png")
             .map_err(|e| anyhow!("Failed to save image: {}", e))?;
@@ -248,9 +245,22 @@ mod tests {
 
         block_in_place(|| {
             while window.is_open() && !window.is_key_down(Key::Escape) {
-                let buffer = controller.get_flipped_screen();
+                let buffer_u8 = controller.screen_capture.capture.read();
 
-                window.update_with_buffer(&buffer, width, height).unwrap();
+                let buffer_u32_slice = bytemuck::cast_slice::<u8, u32>(&buffer_u8);
+
+                if buffer_u32_slice.len() != width * height {
+                    println!(
+                        "Warning: Buffer length mismatch. Expected: {}, Got: {}. Skipping frame.",
+                        width * height,
+                        buffer_u32_slice.len()
+                    );
+                    continue;
+                }
+
+                window
+                    .update_with_buffer(&buffer_u32_slice, width, height)
+                    .unwrap();
             }
         });
 

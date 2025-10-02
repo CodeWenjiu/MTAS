@@ -15,6 +15,7 @@ image = { workspace = true }
 
 [dev-dependencies]
 minifb = "0.28.0"
+bytemuck = "1.23.2"
 
 [build-dependencies]
 bindgen = "0.72.1"
