@@ -13,9 +13,11 @@ libloading = "0.8.9"
 image = "0.25"
 triple_buffer = "8.1.1"
 
+[dev-dependencies]
+minifb = "0.28.0"
+
 [build-dependencies]
 bindgen = "0.72.1"
-minifb = "0.28.0"
 
 # I don't know if there is a better way
 [lints.rust]

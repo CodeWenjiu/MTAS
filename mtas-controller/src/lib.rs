@@ -141,7 +141,7 @@ impl ControllerShell {
         result_rx.await.expect("Controller task has crashed")
     }
 
-    pub fn save_screen(&mut self, path: PathBuf) -> Result<()> {
+    fn get_flipped_screen(&mut self) -> Vec<u32> {
         let screen_cap = &mut self.screen_capture;
         let width = screen_cap.width;
         let height = screen_cap.height;
@@ -152,6 +152,15 @@ impl ControllerShell {
             let start = y * width;
             flipped.extend_from_slice(&screen_output[start..start + width]);
         }
+        flipped
+    }
+
+    pub fn save_screen(&mut self, path: PathBuf) -> Result<()> {
+        let screen_cap = &mut self.screen_capture;
+        let width = screen_cap.width;
+        let height = screen_cap.height;
+        let flipped = self.get_flipped_screen();
+
         let data: Vec<u8> = flipped
             .into_iter()
             .flat_map(|pixel| pixel.to_le_bytes())
@@ -171,7 +180,12 @@ pub fn controller(pla: Platform) -> Result<ControllerShell> {
 
 #[cfg(test)]
 mod tests {
-    use tokio::time::{Instant, sleep};
+    use anyhow::Ok;
+    use minifb::{Key, Window, WindowOptions};
+    use tokio::{
+        task::block_in_place,
+        time::{Instant, sleep},
+    };
 
     use super::*;
 
@@ -188,7 +202,7 @@ mod tests {
                     .await?
             );
 
-            Ok::<(), anyhow::Error>(())
+            Ok::<()>(())
         })?;
 
         Ok(())
@@ -208,6 +222,37 @@ mod tests {
         sleep(Duration::from_millis(500)).await; // wait for auto screen_cap finished
 
         controller.save_screen("./screenshot.png".into())?;
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_vedio_show() -> Result<()> {
+        let mut controller = controller(Platform::MuMu)?;
+
+        println!(
+            "{:?}",
+            controller
+                .execute(Command::ControlScreenCapture { start: true })
+                .await?
+        );
+        sleep(Duration::from_millis(500)).await; // wait for auto screen_cap finished
+
+        let width = controller.screen_capture.width;
+        let height = controller.screen_capture.height;
+
+        let mut window =
+            Window::new("vedio", width, height, WindowOptions::default()).expect("WTF");
+
+        window.set_target_fps(60);
+
+        block_in_place(|| {
+            while window.is_open() && !window.is_key_down(Key::Escape) {
+                let buffer = controller.get_flipped_screen();
+
+                window.update_with_buffer(&buffer, width, height).unwrap();
+            }
+        });
 
         Ok(())
     }
