@@ -1,9 +1,8 @@
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use crate::mumu::MuMuController;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
-use image::{ImageBuffer, Rgba};
 use tokio::{
     sync::{mpsc, oneshot},
     task,
@@ -139,6 +138,7 @@ impl ControllerShell {
         result_rx.await.expect("Controller task has crashed")
     }
 
+    #[allow(dead_code)]
     fn get_flipped_screen(&mut self) -> Vec<u32> {
         let screen_cap = &mut self.screen_capture;
         let width = screen_cap.width;
@@ -151,24 +151,6 @@ impl ControllerShell {
             flipped.extend_from_slice(&screen_output[start..start + width]);
         }
         flipped
-    }
-
-    pub fn save_screen(&mut self, path: PathBuf) -> Result<()> {
-        let screen_cap = &mut self.screen_capture;
-        let width = screen_cap.width;
-        let height = screen_cap.height;
-        let flipped = self.get_flipped_screen();
-
-        let data: Vec<u8> = flipped
-            .into_iter()
-            .flat_map(|pixel| pixel.to_le_bytes())
-            .collect();
-        let img: ImageBuffer<Rgba<u8>, _> =
-            ImageBuffer::from_raw(width as u32, height as u32, data)
-                .ok_or_else(|| anyhow!("Failed to create image buffer"))?;
-        img.save(path)
-            .map_err(|e| anyhow!("Failed to save image: {}", e))?;
-        Ok(())
     }
 }
 
@@ -206,6 +188,8 @@ mod tests {
         Ok(())
     }
 
+    use anyhow::anyhow;
+    use image::{ImageBuffer, Rgba, imageops};
     #[tokio::test]
     async fn test_capture_screen() -> Result<()> {
         let mut controller = controller(Platform::MuMu)?;
@@ -219,7 +203,26 @@ mod tests {
 
         sleep(Duration::from_millis(500)).await; // wait for auto screen_cap finished
 
-        controller.save_screen("./screenshot.png".into())?;
+        let mut screen_cap = controller.screen_capture;
+        let width = screen_cap.width;
+        let height = screen_cap.height;
+        let img = screen_cap.capture.read();
+
+        let data: Vec<u8> = img
+            .into_iter()
+            .flat_map(|pixel| pixel.to_le_bytes())
+            .collect();
+
+        let img: ImageBuffer<Rgba<u8>, _> =
+            ImageBuffer::from_raw(width as u32, height as u32, data)
+                .ok_or_else(|| anyhow!("Failed to create image buffer"))?;
+
+        img.save("./screenshot.png")
+            .map_err(|e| anyhow!("Failed to save image: {}", e))?;
+
+        let gray = imageops::grayscale(&img);
+        gray.save("./screenshot_gray.png")
+            .map_err(|e| anyhow!("Failed to save image: {}", e))?;
 
         Ok(())
     }

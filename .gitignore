@@ -1,4 +1,5 @@
 /target
 .xmake
 .vscode
-**.screenshot
+*/screenshot.png
+*/screenshot_gray.png
