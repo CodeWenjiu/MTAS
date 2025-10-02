@@ -1,3 +1,4 @@
 /target
 .xmake
 .vscode
+**.screenshot

@@ -11,7 +11,7 @@ members = [
     "mtas-cli",
     "mtas-macro",
     "mtas-controller",
-    "mtas-core",
+    "mtas-executer",
     "mtas-tui",
     "mtas-gui",
 ]
@@ -19,3 +19,5 @@ members = [
 [workspace.dependencies]
 anyhow = "1.0.100"
 tokio = "1.47.1"
+image = "0.25"
+imageproc = "0.25"
