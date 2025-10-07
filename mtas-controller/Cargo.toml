@@ -9,9 +9,9 @@ authors = [ "wenjiu <27843087979@qq.com>" ]
 mtas-macro = { path = "../mtas-macro" }
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true }
+image = { workspace = true }
 libloading = "0.8.9"
 triple_buffer = "8.1.1"
-image = { workspace = true }
 
 [dev-dependencies]
 minifb = "0.28.0"

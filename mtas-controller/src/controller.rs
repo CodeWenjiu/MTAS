@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use crate::mumu::MuMuController;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
+use image::{ImageBuffer, Rgba};
 use tokio::{
     sync::{mpsc, oneshot},
     task,
@@ -138,22 +139,18 @@ impl ControllerShell {
         result_rx.await.expect("Controller task has crashed")
     }
 
-    #[allow(dead_code)]
-    fn get_flipped_screen(&mut self) -> Vec<u8> {
+    pub fn get_screen(&mut self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
         let screen_cap = &mut self.screen_capture;
         let width = screen_cap.width;
         let height = screen_cap.height;
-        let screen_output = screen_cap.capture.read();
+        let img = screen_cap.capture.read();
 
-        let bytes_per_pixel = 4;
-        let stride = width * bytes_per_pixel; // The number of bytes in a row
+        let img: ImageBuffer<Rgba<u8>, _> =
+            ImageBuffer::from_raw(width as u32, height as u32, img.clone())
+                .ok_or_else(|| anyhow!("Failed to create image buffer"))
+                .unwrap();
 
-        let mut flipped = Vec::with_capacity(screen_output.len());
-        for y in (0..height).rev() {
-            let start = y * stride;
-            flipped.extend_from_slice(&screen_output[start..start + stride]);
-        }
-        flipped
+        img
     }
 }
 
@@ -163,6 +160,7 @@ pub fn controller(pla: Platform) -> Result<ControllerShell> {
 
 #[cfg(test)]
 mod tests {
+
     use anyhow::Ok;
     use minifb::{Key, Window, WindowOptions};
     use tokio::{
@@ -191,8 +189,8 @@ mod tests {
         Ok(())
     }
 
-    use anyhow::anyhow;
-    use image::{ImageBuffer, Rgba, imageops};
+    use image::imageops::{self, flip_vertical};
+
     #[tokio::test]
     async fn test_capture_screen() -> Result<()> {
         let mut controller = controller(Platform::MuMu)?;
@@ -206,18 +204,15 @@ mod tests {
 
         sleep(Duration::from_millis(500)).await; // wait for auto screen_cap finished
 
-        let mut screen_cap = controller.screen_capture;
-        let width = screen_cap.width;
-        let height = screen_cap.height;
-        let img = screen_cap.capture.read().clone();
+        let img = controller.get_screen();
 
-        let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width as u32, height as u32, img)
-            .ok_or_else(|| anyhow!("Failed to create image buffer"))?;
+        let img = flip_vertical(&img);
 
         img.save("./screenshot.png")
             .map_err(|e| anyhow!("Failed to save image: {}", e))?;
 
         let gray = imageops::grayscale(&img);
+
         gray.save("./screenshot_gray.png")
             .map_err(|e| anyhow!("Failed to save image: {}", e))?;
 

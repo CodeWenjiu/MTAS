@@ -12,3 +12,5 @@ anyhow = { workspace = true }
 tokio = { workspace = true }
 image = { workspace = true }
 imageproc = { workspace = true }
+async-compression = { workspace = true, features = ["zstd"] }
+strum = { version = "0.27.2", features = ["derive", "strum_macros"] }
