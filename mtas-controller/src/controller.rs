@@ -35,16 +35,9 @@ impl Controller {
         }
     }
 
-    async fn capture_screen(&mut self) -> Result<()> {
-        match self {
-            Controller::MuMu(controler) => controler.capture_screen().await,
-        }
-    }
-
     fn run_loop(self, mut request_rx: mpsc::Receiver<(Command, oneshot::Sender<Result<Return>>)>) {
         task::spawn(async move {
             let mut controller = self;
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(16));
 
             'main_loop: loop {
                 tokio::select! {
@@ -58,12 +51,6 @@ impl Controller {
                                 println!("Request channel fully disconnected, exiting run_loop");
                                 break 'main_loop;
                             }
-                        }
-                    }
-                    _ = interval.tick() => {
-                        if controller.capture_screen().await.is_err() {
-                            println!("Screen capture failed, exiting run_loop");
-                            break 'main_loop;
                         }
                     }
                 }
@@ -90,9 +77,7 @@ pub enum Command {
     ControlScreenCapture {
         start: bool,
     },
-    TestScreenShotDelay {
-        iterations: usize,
-    },
+    TestScreenShotDelay {},
 }
 
 pub struct ScreenCapture {
@@ -112,7 +97,6 @@ pub(crate) trait ControllerTrait {
     where
         Self: Sized;
     async fn execute(&mut self, command: Command) -> Result<Return>;
-    async fn capture_screen(&mut self) -> Result<()>;
 }
 
 pub struct ControllerShell {
@@ -178,9 +162,7 @@ mod tests {
             let mut controller = controller(Platform::MuMu)?;
             println!(
                 "{:?}",
-                controller
-                    .execute(Command::TestScreenShotDelay { iterations: 100 })
-                    .await?
+                controller.execute(Command::TestScreenShotDelay {}).await?
             );
 
             Ok::<()>(())
@@ -236,7 +218,7 @@ mod tests {
         let mut window =
             Window::new("vedio", width, height, WindowOptions::default()).expect("WTF");
 
-        window.set_target_fps(60);
+        window.set_target_fps(120);
 
         block_in_place(|| {
             while window.is_open() && !window.is_key_down(Key::Escape) {
@@ -267,34 +249,27 @@ mod tests {
         let mut controller = controller(Platform::MuMu)?;
 
         let commands = vec![
-            Command::Tab { x: 100, y: 100 },
-            Command::Tab { x: 200, y: 200 },
             Command::Scroll {
                 x1: 100,
                 y1: 500,
-                x2: 100,
+                x2: 1000,
                 y2: 200,
                 t: Duration::from_millis(100),
             },
-            Command::Tab { x: 300, y: 300 },
-            Command::Tab { x: 400, y: 400 },
             Command::Scroll {
                 x1: 100,
                 y1: 500,
-                x2: 100,
+                x2: 1000,
                 y2: 200,
                 t: Duration::from_millis(100),
             },
-            Command::Tab { x: 150, y: 150 },
-            Command::Tab { x: 250, y: 250 },
             Command::Scroll {
                 x1: 100,
                 y1: 500,
-                x2: 100,
+                x2: 1000,
                 y2: 200,
                 t: Duration::from_millis(100),
             },
-            Command::Tab { x: 350, y: 350 },
         ];
 
         // --- 1. Benchmark without screen capture ---

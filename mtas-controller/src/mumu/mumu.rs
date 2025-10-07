@@ -1,49 +1,39 @@
-use std::{ffi::OsStr, mem::MaybeUninit, os::windows::ffi::OsStrExt, sync::Arc, time::Duration};
+use std::{
+    ffi::OsStr,
+    os::windows::ffi::OsStrExt,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use crate::{Command, ControllerTrait, Return, ScreenCapture};
 use anyhow::{Result, anyhow};
+use ringbuf::{
+    SharedRb,
+    storage::Heap,
+    traits::{Consumer, Producer, Split},
+    wrap::caching::Caching,
+};
 use tokio::{task::spawn_blocking, time::Instant};
 use triple_buffer::triple_buffer;
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-struct TakeWrapper<T> {
-    value: MaybeUninit<T>,
-}
-
-impl<T> TakeWrapper<T> {
-    fn new(value: T) -> Self {
-        Self {
-            value: MaybeUninit::new(value),
-        }
-    }
-
-    /// Takes the value out, leaving the wrapper in an uninitialized state
-    fn take(&mut self) -> T {
-        unsafe { self.value.assume_init_read() }
-    }
-
-    /// Restores a value back into the wrapper
-    fn restore(&mut self, value: T) {
-        self.value = MaybeUninit::new(value);
-    }
-}
-
 pub struct MuMuController {
     lib: Arc<test>,
     connection: i32,
-    width: usize,
-    height: usize,
-    screen_on: bool,
-    screen_cap: TakeWrapper<triple_buffer::Input<Vec<u8>>>,
+    screen_on: Arc<AtomicBool>,
+    counter: Caching<Arc<SharedRb<Heap<Duration>>>, false, true>,
 }
 
 impl ControllerTrait for MuMuController {
     fn new() -> Result<(Self, ScreenCapture)> {
-        let lib = unsafe {
+        let lib = Arc::new(unsafe {
             test::new("D:\\Program\\mumu\\MuMu Player 12\\nx_device\\12.0\\shell\\sdk\\external_renderer_ipc.dll")
-                        .map_err(|e| anyhow!("Failed to load DLL: {}", e))?
-        };
+                            .map_err(|e| anyhow!("Failed to load DLL: {}", e))?
+        });
 
         let install_path = "D:\\Program\\mumu\\MuMu Player 12";
         let os_str = OsStr::new(install_path);
@@ -74,7 +64,7 @@ impl ControllerTrait for MuMuController {
             return Err(anyhow!("Failed to get display size"));
         }
 
-        let (input_buffer, output_buffer) =
+        let (mut input_buffer, output_buffer) =
             triple_buffer(&vec![0u8; (width * height * 4) as usize]);
 
         let screen_capture = ScreenCapture {
@@ -83,14 +73,55 @@ impl ControllerTrait for MuMuController {
             capture: output_buffer,
         };
 
+        let screen_on = Arc::new(AtomicBool::new(false));
+        let screen_on_in = screen_on.clone();
+        let lib_in = lib.clone();
+
+        let rb = SharedRb::<Heap<Duration>>::new(10);
+        let (mut prod, cons) = rb.split();
+
+        std::thread::spawn(move || -> Result<()> {
+            let mut cur_width = width;
+            let mut cur_height = height;
+
+            loop {
+                let start = Instant::now();
+
+                if !screen_on_in.load(Ordering::Relaxed) {
+                    continue;
+                }
+
+                let result = unsafe {
+                    lib_in.nemu_capture_display(
+                        connection,
+                        0,
+                        (width * height * 4) as i32,
+                        &mut cur_width,
+                        &mut cur_height,
+                        input_buffer.input_buffer_mut().as_mut_ptr() as *mut u8,
+                    )
+                };
+
+                if cur_width != width || cur_height != height {
+                    return Err(anyhow!("Display size changed"));
+                }
+
+                if result != 0 {
+                    return Err(anyhow!("Failed to capture display"));
+                }
+
+                let _ = prod.try_push(start.elapsed());
+
+                input_buffer.publish();
+            }
+        });
+
         Ok((
             MuMuController {
-                lib: Arc::new(lib),
+                lib,
                 connection,
-                width: width as usize,
-                height: height as usize,
-                screen_on: false,
-                screen_cap: TakeWrapper::new(input_buffer),
+                screen_on,
+                counter: cons,
             },
             screen_capture,
         ))
@@ -101,56 +132,8 @@ impl ControllerTrait for MuMuController {
             Command::Tab { x, y } => self.tab(x, y).await,
             Command::Scroll { x1, y1, x2, y2, t } => self.scroll(x1, y1, x2, y2, t).await,
             Command::ControlScreenCapture { start } => self.control_screen_capture(start),
-            Command::TestScreenShotDelay { iterations } => {
-                self.test_screen_shot_delay(iterations).await
-            }
+            Command::TestScreenShotDelay {} => self.test_screen_shot_delay(),
         }
-    }
-
-    async fn capture_screen(&mut self) -> Result<()> {
-        if !self.screen_on {
-            return Ok(());
-        }
-
-        let screen_input = self.screen_cap.take();
-        let width = self.width as i32;
-        let height = self.height as i32;
-        let connection = self.connection;
-        let lib = self.lib.clone();
-
-        let screen_input = spawn_blocking(move || -> Result<triple_buffer::Input<Vec<u8>>> {
-            let mut cur_width = width;
-            let mut cur_height = height;
-            let mut screen_input = screen_input;
-
-            let result = unsafe {
-                lib.nemu_capture_display(
-                    connection,
-                    0,
-                    (width * height * 4) as i32,
-                    &mut cur_width,
-                    &mut cur_height,
-                    screen_input.input_buffer_mut().as_mut_ptr() as *mut u8,
-                )
-            };
-
-            if cur_width != width || cur_height != height {
-                panic!("Display size changed");
-            }
-
-            if result != 0 {
-                return Err(anyhow!("Failed to capture display"));
-            }
-
-            screen_input.publish();
-
-            Ok(screen_input)
-        })
-        .await??;
-
-        self.screen_cap.restore(screen_input);
-
-        Ok(())
     }
 }
 
@@ -203,29 +186,32 @@ impl MuMuController {
     }
 
     fn control_screen_capture(&mut self, start: bool) -> Result<Return> {
-        self.screen_on = start;
+        self.screen_on.store(start, Ordering::Relaxed);
 
         Ok(Return::Nothing)
     }
 
-    async fn test_screen_shot_delay(&mut self, iterations: usize) -> Result<Return> {
-        let mut times = Vec::new();
+    fn test_screen_shot_delay(&mut self) -> Result<Return> {
+        // Turn on screen capture so the background thread starts pushing durations.
+        self.control_screen_capture(true)?;
 
-        let original_screen_on = self.screen_on;
-        self.screen_on = true;
+        let mut times = Vec::with_capacity(10);
 
-        for _ in 0..iterations {
-            let start = Instant::now();
-            self.capture_screen().await?;
-            times.push(start.elapsed());
+        for _ in 0..10 {
+            'innerloop: loop {
+                if let Some(time) = self.counter.try_pop() {
+                    times.push(time);
+                    break 'innerloop;
+                }
+            }
         }
 
-        self.screen_on = original_screen_on;
+        // Stop capturing to avoid unnecessary work after measurement.
+        self.control_screen_capture(false)?;
 
-        let bias = iterations / 10;
-
+        // Safety: we intentionally gathered exactly 10 samples above.
         times.sort();
-        let trimmed = &times[bias..(iterations - bias)];
+        let trimmed = &times[1..(10 - 1)]; // Drop min & max (basic outlier trimming).
         let total: Duration = trimmed.iter().sum();
         let ave = total / trimmed.len() as u32;
 
@@ -247,14 +233,7 @@ mod tests {
     async fn test_mumu_init() -> Result<()> {
         let (mut controller, _screen_cap) = MuMuController::new()?;
 
-        println!(
-            "{:?}",
-            controller
-                .execute(Command::ControlScreenCapture { start: true })
-                .await
-        );
-
-        println!("{:?}", controller.test_screen_shot_delay(100).await);
+        println!("{:?}", controller.test_screen_shot_delay());
 
         Ok(())
     }
