@@ -16,6 +16,8 @@ thiserror = { workspace = true }
 image = { workspace = true }
 imageproc = { workspace = true }
 strum = { version = "0.27.2", features = ["derive", "strum_macros"] }
+dssim-core = "3.4.0"
+rgb = "0.8.52"
 
 [dev-dependencies]
 anyhow = { workspace = true }
