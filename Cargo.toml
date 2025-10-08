@@ -7,11 +7,12 @@ strip         = true
 [workspace]
 resolver = "2"
 members = [
-    "mtas-utils",
-    "mtas-cli",
     "mtas-macro",
+    "mtas-utils",
+    "mtas-logger",
     "mtas-controller",
     "mtas-executer",
+    "mtas-cli",
     "mtas-tui",
     "mtas-gui",
 ]
@@ -19,6 +20,6 @@ members = [
 [workspace.dependencies]
 anyhow = "1.0.100"
 tokio = "1.47.1"
+tracing = "0.1"
 image = "0.25"
 imageproc = "0.25"
-async-compression = "0.4.32"

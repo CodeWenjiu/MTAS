@@ -1,5 +1,5 @@
 [package]
-name = "mtas-gui"
+name = "mtas-logger"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
@@ -7,9 +7,8 @@ authors = [ "wenjiu <27843087979@qq.com>" ]
 
 [dependencies]
 mtas-macro = { path = "../mtas-macro" }
-mtas-logger = { path = "../mtas-logger" }
-mtas-cli = { path = "../mtas-cli" }
 
-tokio = { workspace = true, features = ["full", "tracing"] }
 tracing = { workspace = true }
+tracing-subscriber = "0.3"
+tracing-appender = "0.2"
 anyhow = { workspace = true }

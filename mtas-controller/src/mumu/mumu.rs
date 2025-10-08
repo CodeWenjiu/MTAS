@@ -1,49 +1,39 @@
-use std::{ffi::OsStr, mem::MaybeUninit, os::windows::ffi::OsStrExt, sync::Arc, time::Duration};
+use std::{
+    ffi::OsStr,
+    os::windows::ffi::OsStrExt,
+    sync::{Arc, mpsc::TryRecvError},
+    time::{Duration, Instant},
+};
 
 use crate::{Command, ControllerTrait, Return, ScreenCapture};
 use anyhow::{Result, anyhow};
-use tokio::{task::spawn_blocking, time::Instant};
+use ringbuf::{
+    SharedRb,
+    storage::Heap,
+    traits::{Consumer, Producer, Split},
+};
 use triple_buffer::triple_buffer;
+
+use tracing::*;
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-struct TakeWrapper<T> {
-    value: MaybeUninit<T>,
-}
-
-impl<T> TakeWrapper<T> {
-    fn new(value: T) -> Self {
-        Self {
-            value: MaybeUninit::new(value),
-        }
-    }
-
-    /// Takes the value out, leaving the wrapper in an uninitialized state
-    fn take(&mut self) -> T {
-        unsafe { self.value.assume_init_read() }
-    }
-
-    /// Restores a value back into the wrapper
-    fn restore(&mut self, value: T) {
-        self.value = MaybeUninit::new(value);
-    }
+enum ScreenCapCommand {
+    CaptureEnabled(bool),
+    CaptureTimingEnabled(bool),
 }
 
 pub struct MuMuController {
-    lib: Arc<test>,
-    connection: i32,
-    width: usize,
-    height: usize,
-    screen_on: bool,
-    screen_cap: TakeWrapper<triple_buffer::Input<Vec<u8>>>,
+    execute_cmdtx: std::sync::mpsc::Sender<crate::Command>,
+    result_rx: std::sync::mpsc::Receiver<Result<Return>>,
 }
 
 impl ControllerTrait for MuMuController {
     fn new() -> Result<(Self, ScreenCapture)> {
-        let lib = unsafe {
+        let lib = Arc::new(unsafe {
             test::new("D:\\Program\\mumu\\MuMu Player 12\\nx_device\\12.0\\shell\\sdk\\external_renderer_ipc.dll")
-                        .map_err(|e| anyhow!("Failed to load DLL: {}", e))?
-        };
+                            .map_err(|e| anyhow!("Failed to load DLL: {}", e))?
+        });
 
         let install_path = "D:\\Program\\mumu\\MuMu Player 12";
         let os_str = OsStr::new(install_path);
@@ -74,7 +64,7 @@ impl ControllerTrait for MuMuController {
             return Err(anyhow!("Failed to get display size"));
         }
 
-        let (input_buffer, output_buffer) =
+        let (mut input_buffer, output_buffer) =
             triple_buffer(&vec![0u8; (width * height * 4) as usize]);
 
         let screen_capture = ScreenCapture {
@@ -83,178 +73,211 @@ impl ControllerTrait for MuMuController {
             capture: output_buffer,
         };
 
+        let (screen_cmdtx, screen_cmdrx) = std::sync::mpsc::channel::<ScreenCapCommand>();
+
+        let rb = SharedRb::<Heap<Duration>>::new(10);
+        let (mut prod, mut cons) = rb.split();
+
+        let lib_in = lib.clone();
+
+        std::thread::spawn(move || {
+            info!("Thread ScreenCap Begin");
+
+            let mut cur_width = width;
+            let mut cur_height = height;
+
+            let mut screen_on_in = false;
+            let mut capture_timing_enabled = false;
+
+            loop {
+                let start = Instant::now();
+
+                match screen_cmdrx.try_recv() {
+                    Ok(command) => match command {
+                        ScreenCapCommand::CaptureEnabled(on) => screen_on_in = on,
+                        ScreenCapCommand::CaptureTimingEnabled(on) => capture_timing_enabled = on,
+                    },
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) => break,
+                }
+
+                if !screen_on_in {
+                    continue;
+                }
+
+                let result = unsafe {
+                    lib_in.nemu_capture_display(
+                        connection,
+                        0,
+                        (width * height * 4) as i32,
+                        &mut cur_width,
+                        &mut cur_height,
+                        input_buffer.input_buffer_mut().as_mut_ptr() as *mut u8,
+                    )
+                };
+
+                if cur_width != width || cur_height != height {
+                    panic!("Display size changed");
+                }
+
+                if result != 0 {
+                    panic!("Failed to capture display");
+                }
+
+                if capture_timing_enabled {
+                    let _ = prod.try_push(start.elapsed());
+                }
+
+                input_buffer.publish();
+            }
+
+            info!("Thread ScreenCap End");
+        });
+
+        let (execute_cmdtx, execute_cmdrx) = std::sync::mpsc::channel::<crate::Command>();
+        let (result_tx, result_rx) = std::sync::mpsc::channel::<Result<Return>>();
+
+        std::thread::spawn(move || {
+            info!("Thread Execute Begin");
+
+            let tab = |x: i32, y: i32| -> Result<Return> {
+                let result_down = unsafe { lib.nemu_input_event_touch_down(connection, 0, x, y) };
+                if result_down != 0 {
+                    Err(anyhow!("Failed to touch down at ({}, {})", x, y))
+                } else {
+                    let result_up = unsafe { lib.nemu_input_event_touch_up(connection, 0) };
+                    if result_up != 0 {
+                        Err(anyhow!("Failed to touch up"))
+                    } else {
+                        Ok(Return::Nothing)
+                    }
+                }
+            };
+
+            let scroll = |x1: i32, y1: i32, x2: i32, y2: i32, t: Duration| -> Result<Return> {
+                let _ = t; // Ignore the duration for now
+
+                let res_down =
+                    unsafe { lib.nemu_input_event_finger_touch_down(connection, 0, 1, x1, y1) };
+                if res_down != 0 {
+                    return Err(anyhow!("Failed to touch down at ({}, {})", x1, y1));
+                }
+
+                let res_down =
+                    unsafe { lib.nemu_input_event_finger_touch_down(connection, 0, 1, x2, y2) };
+                if res_down != 0 {
+                    return Err(anyhow!("Failed to touch down at ({}, {})", x2, y2));
+                }
+
+                let res_up = unsafe { lib.nemu_input_event_finger_touch_up(connection, 0, 1) };
+                if res_up != 0 {
+                    return Err(anyhow!("Failed to touch up"));
+                }
+
+                Ok(Return::Nothing)
+            };
+
+            let control_screen_capture = |start: bool| -> Result<Return> {
+                screen_cmdtx
+                    .send(ScreenCapCommand::CaptureEnabled(start))
+                    .expect("WTF");
+
+                Ok(Return::Nothing)
+            };
+
+            let control_screen_capture_timing = |start: bool| -> Result<Return> {
+                screen_cmdtx
+                    .send(ScreenCapCommand::CaptureTimingEnabled(start))
+                    .expect("WTF");
+
+                Ok(Return::Nothing)
+            };
+
+            let mut test_screen_shot_delay = || -> Result<Return> {
+                control_screen_capture(true)?;
+                control_screen_capture_timing(true)?;
+
+                let mut times = Vec::with_capacity(10);
+
+                for _ in 0..10 {
+                    'innerloop: loop {
+                        if let Some(time) = cons.try_pop() {
+                            times.push(time);
+                            break 'innerloop;
+                        }
+                    }
+                }
+
+                control_screen_capture_timing(false)?;
+
+                times.sort();
+                let trimmed = &times[1..(10 - 1)]; // Drop min & max (basic outlier trimming).
+                let total: Duration = trimmed.iter().sum();
+                let ave = total / trimmed.len() as u32;
+
+                Ok(Return::Delay(ave))
+            };
+
+            loop {
+                match execute_cmdrx.try_recv() {
+                    Ok(command) => result_tx
+                        .send(match command {
+                            Command::Tab { x, y } => tab(x, y),
+                            Command::Scroll { x1, y1, x2, y2, t } => scroll(x1, y1, x2, y2, t),
+                            Command::ControlScreenCapture { start } => {
+                                control_screen_capture(start)
+                            }
+                            Command::TestScreenShotDelay {} => test_screen_shot_delay(),
+                        })
+                        .expect("WTF"),
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) => {
+                        unsafe { lib.nemu_disconnect(connection) };
+                        break;
+                    }
+                };
+            }
+
+            info!("Thread Execute End");
+        });
+
         Ok((
             MuMuController {
-                lib: Arc::new(lib),
-                connection,
-                width: width as usize,
-                height: height as usize,
-                screen_on: false,
-                screen_cap: TakeWrapper::new(input_buffer),
+                execute_cmdtx,
+                result_rx,
             },
             screen_capture,
         ))
     }
 
-    async fn execute(&mut self, command: crate::Command) -> Result<Return> {
-        match command {
-            Command::Tab { x, y } => self.tab(x, y).await,
-            Command::Scroll { x1, y1, x2, y2, t } => self.scroll(x1, y1, x2, y2, t).await,
-            Command::ControlScreenCapture { start } => self.control_screen_capture(start),
-            Command::TestScreenShotDelay { iterations } => {
-                self.test_screen_shot_delay(iterations).await
-            }
-        }
-    }
-
-    async fn capture_screen(&mut self) -> Result<()> {
-        if !self.screen_on {
-            return Ok(());
-        }
-
-        let screen_input = self.screen_cap.take();
-        let width = self.width as i32;
-        let height = self.height as i32;
-        let connection = self.connection;
-        let lib = self.lib.clone();
-
-        let screen_input = spawn_blocking(move || -> Result<triple_buffer::Input<Vec<u8>>> {
-            let mut cur_width = width;
-            let mut cur_height = height;
-            let mut screen_input = screen_input;
-
-            let result = unsafe {
-                lib.nemu_capture_display(
-                    connection,
-                    0,
-                    (width * height * 4) as i32,
-                    &mut cur_width,
-                    &mut cur_height,
-                    screen_input.input_buffer_mut().as_mut_ptr() as *mut u8,
-                )
-            };
-
-            if cur_width != width || cur_height != height {
-                panic!("Display size changed");
-            }
-
-            if result != 0 {
-                return Err(anyhow!("Failed to capture display"));
-            }
-
-            screen_input.publish();
-
-            Ok(screen_input)
-        })
-        .await??;
-
-        self.screen_cap.restore(screen_input);
-
-        Ok(())
-    }
-}
-
-impl MuMuController {
-    async fn tab(&mut self, x: i32, y: i32) -> Result<Return> {
-        let connection = self.connection;
-        let lib = self.lib.clone();
-
-        spawn_blocking(move || {
-            let result_down = unsafe { lib.nemu_input_event_touch_down(connection, 0, x, y) };
-            if result_down != 0 {
-                Err(anyhow!("Failed to touch down at ({}, {})", x, y))
-            } else {
-                let result_up = unsafe { lib.nemu_input_event_touch_up(connection, 0) };
-                if result_up != 0 {
-                    Err(anyhow!("Failed to touch up"))
-                } else {
-                    Ok(Return::Nothing)
-                }
-            }
-        })
-        .await?
-    }
-
-    async fn scroll(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, t: Duration) -> Result<Return> {
-        let _ = t; // Ignore the duration for now
-
-        let connection = self.connection;
-        let lib = self.lib.clone();
-
-        spawn_blocking(move || {
-            let res_down =
-                unsafe { lib.nemu_input_event_finger_touch_down(connection, 0, 1, x1, y1) };
-            if res_down != 0 {
-                return Err(anyhow!("Failed to touch down at ({}, {})", x1, y1));
-            }
-
-            let res_down =
-                unsafe { lib.nemu_input_event_finger_touch_down(connection, 0, 1, x2, y2) };
-            if res_down != 0 {
-                return Err(anyhow!("Failed to touch down at ({}, {})", x2, y2));
-            }
-            let res_up = unsafe { lib.nemu_input_event_finger_touch_up(connection, 0, 1) };
-            if res_up != 0 {
-                return Err(anyhow!("Failed to touch up"));
-            }
-            Ok(Return::Nothing)
-        })
-        .await?
-    }
-
-    fn control_screen_capture(&mut self, start: bool) -> Result<Return> {
-        self.screen_on = start;
-
-        Ok(Return::Nothing)
-    }
-
-    async fn test_screen_shot_delay(&mut self, iterations: usize) -> Result<Return> {
-        let mut times = Vec::new();
-
-        let original_screen_on = self.screen_on;
-        self.screen_on = true;
-
-        for _ in 0..iterations {
-            let start = Instant::now();
-            self.capture_screen().await?;
-            times.push(start.elapsed());
-        }
-
-        self.screen_on = original_screen_on;
-
-        let bias = iterations / 10;
-
-        times.sort();
-        let trimmed = &times[bias..(iterations - bias)];
-        let total: Duration = trimmed.iter().sum();
-        let ave = total / trimmed.len() as u32;
-
-        Ok(Return::Delay(ave))
-    }
-}
-
-impl Drop for MuMuController {
-    fn drop(&mut self) {
-        unsafe { self.lib.nemu_disconnect(self.connection) };
+    #[instrument(skip_all)]
+    fn execute(&mut self, command: crate::Command) -> Result<Return> {
+        self.execute_cmdtx.send(command).expect("WTF");
+        self.result_rx.recv().expect("WTF")
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    use anyhow::Ok;
+
     use super::*;
 
-    #[tokio::test]
-    async fn test_mumu_init() -> Result<()> {
+    #[instrument]
+    fn test(important_param: u64, name: &str) {
+        info!("This is Just an test");
+    }
+
+    #[test]
+    fn test_mumu_init() -> Result<()> {
+        mtas_logger::init_logger!(std::io::stdout());
+
+        test(42, "Ferris");
+
         let (mut controller, _screen_cap) = MuMuController::new()?;
 
-        println!(
-            "{:?}",
-            controller
-                .execute(Command::ControlScreenCapture { start: true })
-                .await
-        );
-
-        println!("{:?}", controller.test_screen_shot_delay(100).await);
+        info!("{:?}", controller.execute(Command::TestScreenShotDelay {}));
 
         Ok(())
     }
