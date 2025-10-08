@@ -1,10 +1,7 @@
 use std::{
     ffi::OsStr,
     os::windows::ffi::OsStrExt,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, mpsc::TryRecvError},
     time::Duration,
 };
 
@@ -21,10 +18,14 @@ use triple_buffer::triple_buffer;
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
+enum ScreenCapCommand {
+    Control(bool),
+}
+
 pub struct MuMuController {
     lib: Arc<test>,
     connection: i32,
-    screen_on: Arc<AtomicBool>,
+    screen_cmdtx: std::sync::mpsc::Sender<ScreenCapCommand>,
     counter: Caching<Arc<SharedRb<Heap<Duration>>>, false, true>,
 }
 
@@ -73,21 +74,33 @@ impl ControllerTrait for MuMuController {
             capture: output_buffer,
         };
 
-        let screen_on = Arc::new(AtomicBool::new(false));
-        let screen_on_in = screen_on.clone();
+        let (screen_cmdtx, screen_cmdrx) = std::sync::mpsc::channel::<ScreenCapCommand>();
+
         let lib_in = lib.clone();
 
         let rb = SharedRb::<Heap<Duration>>::new(10);
         let (mut prod, cons) = rb.split();
 
-        std::thread::spawn(move || -> Result<()> {
+        std::thread::spawn(move || {
+            tklog::info!("Thread ScreenCap Begin");
+
             let mut cur_width = width;
             let mut cur_height = height;
+
+            let mut screen_on_in = false;
 
             loop {
                 let start = Instant::now();
 
-                if !screen_on_in.load(Ordering::Relaxed) {
+                match screen_cmdrx.try_recv() {
+                    Ok(command) => match command {
+                        ScreenCapCommand::Control(on) => screen_on_in = on,
+                    },
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) => break,
+                }
+
+                if !screen_on_in {
                     continue;
                 }
 
@@ -103,24 +116,26 @@ impl ControllerTrait for MuMuController {
                 };
 
                 if cur_width != width || cur_height != height {
-                    return Err(anyhow!("Display size changed"));
+                    panic!("Display size changed");
                 }
 
                 if result != 0 {
-                    return Err(anyhow!("Failed to capture display"));
+                    panic!("Failed to capture display");
                 }
 
                 let _ = prod.try_push(start.elapsed());
 
                 input_buffer.publish();
             }
+
+            tklog::info!("Thread ScreenCap End");
         });
 
         Ok((
             MuMuController {
                 lib,
                 connection,
-                screen_on,
+                screen_cmdtx,
                 counter: cons,
             },
             screen_capture,
@@ -186,7 +201,9 @@ impl MuMuController {
     }
 
     fn control_screen_capture(&mut self, start: bool) -> Result<Return> {
-        self.screen_on.store(start, Ordering::Relaxed);
+        self.screen_cmdtx
+            .send(ScreenCapCommand::Control(start))
+            .expect("WTF");
 
         Ok(Return::Nothing)
     }
@@ -227,13 +244,23 @@ impl Drop for MuMuController {
 
 #[cfg(test)]
 mod tests {
+    use tklog::{Format, LEVEL, LOG, LevelOption};
+
     use super::*;
 
     #[tokio::test]
     async fn test_mumu_init() -> Result<()> {
+        LOG.set_level_option(
+            LEVEL::Info,
+            LevelOption {
+                format: Some(Format::LevelFlag),
+                formatter: None,
+            },
+        );
+
         let (mut controller, _screen_cap) = MuMuController::new()?;
 
-        println!("{:?}", controller.test_screen_shot_delay());
+        tklog::info!(format!("{:?}", controller.test_screen_shot_delay()));
 
         Ok(())
     }
