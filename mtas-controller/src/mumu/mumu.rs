@@ -3,26 +3,26 @@ use std::{
     os::windows::ffi::OsStrExt,
     sync::{
         Arc,
-        mpsc::{Sender, TryRecvError},
+        mpsc::{SendError, Sender, TryRecvError},
     },
     time::{Duration, Instant},
 };
 
 use crate::{Command, ControllerTrait, Return, ScreenCapture};
-use anyhow::{Result, anyhow};
 use ringbuf::{
     SharedRb,
     storage::Heap,
     traits::{Consumer, Producer, Split},
     wrap::caching::Caching,
 };
+use thiserror::Error;
 use triple_buffer::triple_buffer;
 
 use tracing::*;
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-enum ScreenCapCommand {
+pub enum ScreenCapCommand {
     CaptureEnabled(bool),
     CaptureTimingEnabled(bool),
 }
@@ -34,11 +34,53 @@ pub struct MuMuController {
     connection: i32,
 }
 
+#[derive(Error, Debug)]
+pub enum MuMuError {
+    #[error("MuMu Player Not Found：{0}")]
+    PathNotFound(#[from] libloading::Error),
+
+    #[error("Screen Capture Command Failed to Send：{0}")]
+    ScreenCap(#[from] SendError<ScreenCapCommand>),
+
+    #[error("Nemu Connect Failed: {0}")]
+    NemuConnect(i32),
+
+    #[error("Nemu Get DisplayId Failed: {0}")]
+    NemuGetDisplayId(i32),
+
+    #[error("Nemu Capture Display Failed: {0}")]
+    NemuCaptureDisplay(i32),
+
+    #[error("Nemu Input Text Failed: {0}")]
+    NemuInputText(i32),
+
+    #[error("Nemu Input Event Touch Down Failed: {0}")]
+    NemuInputEventTouchDown(i32),
+
+    #[error("Nemu Input Event Touch Up Failed: {0}")]
+    NemuInputEventTouchUp(i32),
+
+    #[error("Nemu Input Event Key Down Failed: {0}")]
+    NemuInputEventKeyDown(i32),
+
+    #[error("Nemu Input Event Key Up Failed: {0}")]
+    NemuInputEventKeyUp(i32),
+
+    #[error("Nemu Input Event Finger Touch Down Failed: {0}")]
+    NemuInputEventFingerTouchDown(i32),
+
+    #[error("Nemu Input Event Finger Touch Up Failed: {0}")]
+    NemuInputEventFingerTouchUp(i32),
+}
+
 impl ControllerTrait for MuMuController {
-    fn new() -> Result<(Self, ScreenCapture)> {
+    type Error = MuMuError;
+
+    fn new() -> Result<(Self, ScreenCapture), MuMuError> {
         let lib = Arc::new(unsafe {
-            test::new("D:\\Program\\mumu\\MuMu Player 12\\nx_device\\12.0\\shell\\sdk\\external_renderer_ipc.dll")
-                            .map_err(|e| anyhow!("Failed to load DLL: {}", e))?
+            test::new(
+                "D:\\Program\\mumu\\MuMu Player 12\\nx_device\\12.0\\shell\\sdk\\external_renderer_ipc.dll",
+            )?
         });
 
         let install_path = "D:\\Program\\mumu\\MuMu Player 12";
@@ -49,7 +91,7 @@ impl ControllerTrait for MuMuController {
         let connection = unsafe { lib.nemu_connect(wide_chars.as_ptr(), 0) };
 
         if connection <= 0 {
-            return Err(anyhow!("Connection failed, handle: {}", connection));
+            return Err(MuMuError::NemuConnect(connection));
         }
 
         let mut width: i32 = 0;
@@ -67,7 +109,7 @@ impl ControllerTrait for MuMuController {
         };
 
         if result != 0 {
-            return Err(anyhow!("Failed to get display size"));
+            return Err(MuMuError::NemuCaptureDisplay(result));
         }
 
         let (mut input_buffer, output_buffer) =
@@ -152,7 +194,7 @@ impl ControllerTrait for MuMuController {
     }
 
     #[instrument(skip_all)]
-    fn execute(&mut self, command: crate::Command) -> Result<Return> {
+    fn execute(&mut self, command: crate::Command) -> Result<Return, MuMuError> {
         match command {
             Command::Tab { x, y } => self.tab(x, y),
             Command::Scroll { x1, y1, x2, y2, t } => self.scroll(x1, y1, x2, y2, t),
@@ -163,24 +205,31 @@ impl ControllerTrait for MuMuController {
 }
 
 impl MuMuController {
-    pub fn tab(&self, x: i32, y: i32) -> Result<Return> {
+    pub fn tab(&self, x: i32, y: i32) -> Result<Return, MuMuError> {
         let result_down = unsafe {
             self.lib
                 .nemu_input_event_touch_down(self.connection, 0, x, y)
         };
         if result_down != 0 {
-            Err(anyhow!("Failed to touch down at ({}, {})", x, y))
+            Err(MuMuError::NemuInputEventTouchDown(result_down))
         } else {
             let result_up = unsafe { self.lib.nemu_input_event_touch_up(self.connection, 0) };
             if result_up != 0 {
-                Err(anyhow!("Failed to touch up"))
+                Err(MuMuError::NemuInputEventTouchUp(result_up))
             } else {
                 Ok(Return::Nothing)
             }
         }
     }
 
-    pub fn scroll(&self, x1: i32, y1: i32, x2: i32, y2: i32, t: Duration) -> Result<Return> {
+    pub fn scroll(
+        &self,
+        x1: i32,
+        y1: i32,
+        x2: i32,
+        y2: i32,
+        t: Duration,
+    ) -> Result<Return, MuMuError> {
         let _ = t; // Ignore the duration for now
 
         let res_down = unsafe {
@@ -188,7 +237,7 @@ impl MuMuController {
                 .nemu_input_event_finger_touch_down(self.connection, 0, 1, x1, y1)
         };
         if res_down != 0 {
-            return Err(anyhow!("Failed to touch down at ({}, {})", x1, y1));
+            return Err(MuMuError::NemuInputEventFingerTouchDown(res_down));
         }
 
         let res_down = unsafe {
@@ -196,7 +245,7 @@ impl MuMuController {
                 .nemu_input_event_finger_touch_down(self.connection, 0, 1, x2, y2)
         };
         if res_down != 0 {
-            return Err(anyhow!("Failed to touch down at ({}, {})", x2, y2));
+            return Err(MuMuError::NemuInputEventFingerTouchDown(res_down));
         }
 
         let res_up = unsafe {
@@ -204,27 +253,27 @@ impl MuMuController {
                 .nemu_input_event_finger_touch_up(self.connection, 0, 1)
         };
         if res_up != 0 {
-            return Err(anyhow!("Failed to touch up"));
+            return Err(MuMuError::NemuInputEventFingerTouchUp(res_up));
         }
 
         Ok(Return::Nothing)
     }
 
-    pub fn control_screen_capture(&self, start: bool) -> Result<Return> {
+    pub fn control_screen_capture(&self, start: bool) -> Result<Return, MuMuError> {
         self.screen_cmdtx
             .send(ScreenCapCommand::CaptureEnabled(start))?;
 
         Ok(Return::Nothing)
     }
 
-    pub fn control_screen_capture_timing(&self, start: bool) -> Result<Return> {
+    pub fn control_screen_capture_timing(&self, start: bool) -> Result<Return, MuMuError> {
         self.screen_cmdtx
             .send(ScreenCapCommand::CaptureTimingEnabled(start))?;
 
         Ok(Return::Nothing)
     }
 
-    pub fn test_screen_shot_delay(&mut self) -> Result<Return> {
+    pub fn test_screen_shot_delay(&mut self) -> Result<Return, MuMuError> {
         self.control_screen_capture(true)?;
         self.control_screen_capture_timing(true)?;
 
@@ -256,7 +305,7 @@ impl Drop for MuMuController {
 #[cfg(test)]
 mod tests {
 
-    use anyhow::Ok;
+    use anyhow::Result;
 
     use super::*;
 
