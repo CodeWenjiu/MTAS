@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use crate::mumu::MuMuController;
-use anyhow::{Result, anyhow};
+use crate::mumu::{MuMuController, MuMuError};
+use thiserror::Error;
 
 use image::{ImageBuffer, Rgba};
 use triple_buffer::Output;
@@ -13,8 +13,17 @@ pub enum Controller {
     MuMu(MuMuController),
 }
 
+#[derive(Error, Debug)]
+pub enum ControllerError {
+    #[error("MuMu Controller Error occurred: {0}")]
+    MuMuError(#[from] MuMuError),
+
+    #[error("Image Container is Not Big Enough")]
+    ScreenCaptureError(),
+}
+
 impl Platform {
-    fn new(&self) -> Result<(Controller, ScreenCapture)> {
+    fn new(&self) -> Result<(Controller, ScreenCapture), ControllerError> {
         match self {
             Platform::MuMu => {
                 let (controller, screen_capture) = MuMuController::new()?;
@@ -25,9 +34,9 @@ impl Platform {
 }
 
 impl Controller {
-    pub fn execute(&mut self, command: Command) -> Result<Return> {
+    pub fn execute(&mut self, command: Command) -> Result<Return, ControllerError> {
         match self {
-            Controller::MuMu(controler) => controler.execute(command),
+            Controller::MuMu(controler) => controler.execute(command).map_err(Into::into),
         }
     }
 }
@@ -58,17 +67,16 @@ pub struct ScreenCapture {
 }
 
 impl ScreenCapture {
-    pub fn get_screen(&mut self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+    pub fn get_screen(&mut self) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, ControllerError> {
         let width = self.width;
         let height = self.height;
         let img = self.capture.read();
 
         let img: ImageBuffer<Rgba<u8>, _> =
             ImageBuffer::from_raw(width as u32, height as u32, img.clone())
-                .ok_or_else(|| anyhow!("Failed to create image buffer"))
-                .unwrap();
+                .ok_or_else(|| ControllerError::ScreenCaptureError())?;
 
-        img
+        Ok(img)
     }
 }
 
@@ -79,13 +87,15 @@ pub enum Return {
 }
 
 pub trait ControllerTrait {
-    fn new() -> Result<(Self, ScreenCapture)>
+    type Error;
+
+    fn new() -> Result<(Self, ScreenCapture), Self::Error>
     where
         Self: Sized;
-    fn execute(&mut self, command: Command) -> Result<Return>;
+    fn execute(&mut self, command: Command) -> Result<Return, Self::Error>;
 }
 
-pub fn controller(pla: Platform) -> Result<(Controller, ScreenCapture)> {
+pub fn controller(pla: Platform) -> Result<(Controller, ScreenCapture), ControllerError> {
     pla.new()
 }
 
@@ -96,7 +106,7 @@ mod tests {
         time::Instant,
     };
 
-    use anyhow::Ok;
+    use anyhow::{Result, anyhow};
     use minifb::{Key, Window, WindowOptions};
     use tracing::info;
 
@@ -124,7 +134,7 @@ mod tests {
 
         sleep(Duration::from_millis(500));
 
-        let img = screen_cap.get_screen();
+        let img = screen_cap.get_screen()?;
 
         let img = flip_vertical(&img);
 

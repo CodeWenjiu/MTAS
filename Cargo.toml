@@ -19,6 +19,7 @@ members = [
 
 [workspace.dependencies]
 anyhow = "1.0.100"
+thiserror = "2.0.17"
 tokio = "1.47.1"
 tracing = "0.1"
 image = "0.25"
