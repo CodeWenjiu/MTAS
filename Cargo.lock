@@ -949,8 +949,10 @@ dependencies = [
  "anyhow",
  "mtas-controller",
  "mtas-executer",
+ "mtas-logger",
  "mtas-macro",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -963,12 +965,11 @@ dependencies = [
  "image",
  "libloading",
  "minifb",
+ "mtas-logger",
  "mtas-macro",
  "ringbuf",
  "tokio",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "triple_buffer",
 ]
 
@@ -980,17 +981,34 @@ dependencies = [
  "image",
  "imageproc",
  "mtas-controller",
+ "mtas-logger",
  "mtas-macro",
  "strum",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
 name = "mtas-gui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "mtas-cli",
+ "mtas-logger",
  "mtas-macro",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "mtas-logger"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mtas-macro",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1001,8 +1019,12 @@ version = "0.1.0"
 name = "mtas-tui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "mtas-cli",
+ "mtas-logger",
  "mtas-macro",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

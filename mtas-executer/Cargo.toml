@@ -8,8 +8,14 @@ authors = [ "wenjiu <27843087979@qq.com>" ]
 [dependencies]
 mtas-macro = { path = "../mtas-macro" }
 mtas-controller = { path = "../mtas-controller" }
+
+tokio = { workspace = true, features = ["full", "tracing"] }
+tracing = { workspace = true }
 anyhow = { workspace = true }
-tokio = { workspace = true }
+
 image = { workspace = true }
 imageproc = { workspace = true }
 strum = { version = "0.27.2", features = ["derive", "strum_macros"] }
+
+[dev-dependencies]
+mtas-logger = { path = "../mtas-logger" }

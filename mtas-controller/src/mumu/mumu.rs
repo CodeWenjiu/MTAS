@@ -245,37 +245,18 @@ impl Drop for MuMuController {
 #[cfg(test)]
 mod tests {
 
+    use anyhow::Ok;
+
     use super::*;
+
     #[tracing::instrument]
     fn test(important_param: u64, name: &str) {
         tracing::info!("This is Just an test");
     }
 
-    #[tokio::test]
-    async fn test_mumu_init() -> Result<()> {
-        let (append_stdout, _guard) = tracing_appender::non_blocking(std::io::stdout());
-
-        let subscriber = tracing_subscriber::fmt()
-            // Output to stdout
-            .with_writer(append_stdout)
-            // Use a more pretty, human-readable log format
-            .pretty()
-            // Use ANSI colors for output
-            .with_ansi(true)
-            // Dont display the timestamp
-            .without_time()
-            // Display source code file paths
-            .with_file(true)
-            // Display source code line numbers
-            .with_line_number(true)
-            // Display the thread ID an event was recorded on
-            .with_thread_ids(true)
-            // Don't display the event's target (module path)
-            .with_target(false)
-            // Build the subscriber
-            .finish();
-
-        tracing::subscriber::set_global_default(subscriber)?;
+    #[test]
+    fn test_mumu_init() -> Result<()> {
+        let _guard = mtas_logger::set_logger(std::io::stdout())?;
 
         test(42, "Ferris");
 

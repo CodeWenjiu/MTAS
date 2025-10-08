@@ -6,5 +6,10 @@ license = "MIT"
 authors = [ "wenjiu <27843087979@qq.com>" ]
 
 [dependencies]
-mtas-cli = { path = "../mtas-cli" }
 mtas-macro = { path = "../mtas-macro" }
+mtas-logger = { path = "../mtas-logger" }
+mtas-cli = { path = "../mtas-cli" }
+
+tokio = { workspace = true, features = ["full", "tracing"] }
+tracing = { workspace = true }
+anyhow = { workspace = true }

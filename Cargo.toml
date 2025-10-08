@@ -9,6 +9,7 @@ resolver = "2"
 members = [
     "mtas-macro",
     "mtas-utils",
+    "mtas-logger",
     "mtas-controller",
     "mtas-executer",
     "mtas-cli",
@@ -20,7 +21,5 @@ members = [
 anyhow = "1.0.100"
 tokio = "1.47.1"
 tracing = "0.1"
-tracing-subscriber = "0.3"
-tracing-appender = "0.2"
 image = "0.25"
 imageproc = "0.25"
