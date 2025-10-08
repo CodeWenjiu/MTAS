@@ -82,7 +82,7 @@ impl ControllerTrait for MuMuController {
         let (mut prod, cons) = rb.split();
 
         std::thread::spawn(move || {
-            tklog::info!("Thread ScreenCap Begin");
+            tracing::info!("Thread ScreenCap Begin");
 
             let mut cur_width = width;
             let mut cur_height = height;
@@ -128,7 +128,7 @@ impl ControllerTrait for MuMuController {
                 input_buffer.publish();
             }
 
-            tklog::info!("Thread ScreenCap End");
+            tracing::info!("Thread ScreenCap End");
         });
 
         Ok((
@@ -244,23 +244,34 @@ impl Drop for MuMuController {
 
 #[cfg(test)]
 mod tests {
-    use tklog::{Format, LEVEL, LOG, LevelOption};
 
     use super::*;
 
     #[tokio::test]
     async fn test_mumu_init() -> Result<()> {
-        LOG.set_level_option(
-            LEVEL::Info,
-            LevelOption {
-                format: Some(Format::LevelFlag),
-                formatter: None,
-            },
-        );
+        let subscriber = tracing_subscriber::fmt()
+            // Output to stdout
+            .with_writer(std::io::stdout)
+            // Use a more pretty, human-readable log format
+            .pretty()
+            // Dont display the timestamp
+            .without_time()
+            // Display source code file paths
+            .with_file(true)
+            // Display source code line numbers
+            .with_line_number(true)
+            // Display the thread ID an event was recorded on
+            .with_thread_ids(true)
+            // Don't display the event's target (module path)
+            .with_target(false)
+            // Build the subscriber
+            .finish();
+
+        tracing::subscriber::set_global_default(subscriber)?;
 
         let (mut controller, _screen_cap) = MuMuController::new()?;
 
-        tklog::info!(format!("{:?}", controller.test_screen_shot_delay()));
+        tracing::info!("{:?}", controller.test_screen_shot_delay());
 
         Ok(())
     }
