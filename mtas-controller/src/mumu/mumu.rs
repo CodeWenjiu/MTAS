@@ -246,14 +246,22 @@ impl Drop for MuMuController {
 mod tests {
 
     use super::*;
+    #[tracing::instrument]
+    fn test(important_param: u64, name: &str) {
+        tracing::info!("This is Just an test");
+    }
 
     #[tokio::test]
     async fn test_mumu_init() -> Result<()> {
+        let (append_stdout, _guard) = tracing_appender::non_blocking(std::io::stdout());
+
         let subscriber = tracing_subscriber::fmt()
             // Output to stdout
-            .with_writer(std::io::stdout)
+            .with_writer(append_stdout)
             // Use a more pretty, human-readable log format
             .pretty()
+            // Use ANSI colors for output
+            .with_ansi(true)
             // Dont display the timestamp
             .without_time()
             // Display source code file paths
@@ -268,6 +276,8 @@ mod tests {
             .finish();
 
         tracing::subscriber::set_global_default(subscriber)?;
+
+        test(42, "Ferris");
 
         let (mut controller, _screen_cap) = MuMuController::new()?;
 
