@@ -14,7 +14,13 @@ use tracing_appender::non_blocking::WorkerGuard;
 /// and may cause log events to be lost.
 ///
 /// Typical usage:
-/// let _guard = mtas_logger::set_logger(std::io::stdout())?;
+/// ```rust
+/// fn main() {
+///     let _guard = mtas_logger::set_logger(std::io::stdout())?;
+///     info!("Hello, world!");
+///     ...
+/// }
+/// ```
 /// (Store `_guard` in a variable you keep until shutdown; using a leading underscore
 /// silences unused warnings while still preserving the guard.)
 pub fn set_logger<T: Write + Send + Debug + 'static>(writer: T) -> Result<WorkerGuard> {
@@ -45,4 +51,36 @@ pub fn set_logger<T: Write + Send + Debug + 'static>(writer: T) -> Result<Worker
     tracing::info!("Logger initialized");
 
     Ok(_guard)
+}
+
+#[macro_export]
+/// Convenience macro to initialize the global logger/tracing subscriber.
+///
+/// This is a thin wrapper around `set_logger` intended for ergonomic use in `main`
+/// or test setup code. It creates and stores the required `WorkerGuard` in a
+/// local variable named `_guard`, which must live for as long as you need logging
+/// to function. Dropping the guard will stop the background logging worker,
+/// potentially causing log events to be lost.
+///
+/// Usage:
+/// ```rust,no_run
+/// fn main() -> anyhow::Result<()> {
+///     mtas_logger::init_logger!(std::io::stdout());
+///     tracing::info!("Application started");
+///     Ok(())
+/// }
+/// ```
+///
+/// You may pass any writer that implements `Write + Send + Debug + 'static`,
+/// such as `std::io::stdout()`, a file, or an in-memory buffer.
+///
+/// Note:
+/// - The underscore in `_guard` suppresses unused variable warnings while
+///   still keeping the guard alive.
+/// - This macro returns `Result<()>` context via the `?` operator within the
+///   calling function (so your function should return a compatible `Result`).
+macro_rules! init_logger {
+    ($writer:expr) => {
+        let _guard = $crate::set_logger($writer)?;
+    };
 }

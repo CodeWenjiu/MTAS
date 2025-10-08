@@ -4,10 +4,6 @@ use crate::mumu::MuMuController;
 use anyhow::{Result, anyhow};
 
 use image::{ImageBuffer, Rgba};
-use tokio::{
-    sync::{mpsc, oneshot},
-    task,
-};
 use triple_buffer::Output;
 pub enum Platform {
     MuMu,
@@ -29,39 +25,14 @@ impl Platform {
 }
 
 impl Controller {
-    async fn execute(&mut self, command: Command) -> Result<Return> {
+    pub fn execute(&mut self, command: Command) -> Result<Return> {
         match self {
-            Controller::MuMu(controler) => controler.execute(command).await,
+            Controller::MuMu(controler) => controler.execute(command),
         }
-    }
-
-    fn run_loop(self, mut request_rx: mpsc::Receiver<(Command, oneshot::Sender<Result<Return>>)>) {
-        task::spawn(async move {
-            let mut controller = self;
-
-            'main_loop: loop {
-                tokio::select! {
-                    request = request_rx.recv() => {
-                        match request {
-                            Some((command, result_tx)) => {
-                                let result = controller.execute(command).await;
-                                let _ = result_tx.send(result);
-                            }
-                            None => {
-                                println!("Request channel fully disconnected, exiting run_loop");
-                                break 'main_loop;
-                            }
-                        }
-                    }
-                }
-            }
-
-            println!("run_loop task finished");
-        });
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Command {
     Tab {
         x: i32,
@@ -86,48 +57,11 @@ pub struct ScreenCapture {
     pub capture: Output<Vec<u8>>,
 }
 
-#[derive(Debug)]
-pub enum Return {
-    Nothing,
-    Delay(Duration),
-}
-
-pub(crate) trait ControllerTrait {
-    fn new() -> Result<(Self, ScreenCapture)>
-    where
-        Self: Sized;
-    async fn execute(&mut self, command: Command) -> Result<Return>;
-}
-
-pub struct ControllerShell {
-    request_tx: mpsc::Sender<(Command, oneshot::Sender<Result<Return>>)>,
-    screen_capture: ScreenCapture,
-}
-
-impl ControllerShell {
-    pub fn new(pla: Platform) -> Result<Self> {
-        let (controller, screen_capture) = pla.new()?;
-        let (request_tx, request_rx) = mpsc::channel(10);
-
-        controller.run_loop(request_rx);
-
-        Ok(Self {
-            request_tx,
-            screen_capture,
-        })
-    }
-
-    pub async fn execute(&mut self, command: Command) -> Result<Return> {
-        let (result_tx, result_rx) = oneshot::channel();
-        self.request_tx.send((command, result_tx)).await?;
-        result_rx.await.expect("Controller task has crashed")
-    }
-
+impl ScreenCapture {
     pub fn get_screen(&mut self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-        let screen_cap = &mut self.screen_capture;
-        let width = screen_cap.width;
-        let height = screen_cap.height;
-        let img = screen_cap.capture.read();
+        let width = self.width;
+        let height = self.height;
+        let img = self.capture.read();
 
         let img: ImageBuffer<Rgba<u8>, _> =
             ImageBuffer::from_raw(width as u32, height as u32, img.clone())
@@ -138,55 +72,59 @@ impl ControllerShell {
     }
 }
 
-pub fn controller(pla: Platform) -> Result<ControllerShell> {
-    ControllerShell::new(pla)
+#[derive(Debug)]
+pub enum Return {
+    Nothing,
+    Delay(Duration),
+}
+
+pub trait ControllerTrait {
+    fn new() -> Result<(Self, ScreenCapture)>
+    where
+        Self: Sized;
+    fn execute(&mut self, command: Command) -> Result<Return>;
+}
+
+pub fn controller(pla: Platform) -> Result<(Controller, ScreenCapture)> {
+    pla.new()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        thread::{sleep, spawn},
+        time::Instant,
+    };
 
     use anyhow::Ok;
     use minifb::{Key, Window, WindowOptions};
-    use tokio::{
-        task::block_in_place,
-        time::{Instant, sleep},
-    };
+    use tracing::info;
 
     use super::*;
 
     #[test]
     fn test_run_loop() -> Result<()> {
-        let rt = tokio::runtime::Runtime::new()?;
+        mtas_logger::init_logger!(std::io::stdout());
 
-        rt.block_on(async {
-            let mut controller = controller(Platform::MuMu)?;
-            println!(
-                "{:?}",
-                controller.execute(Command::TestScreenShotDelay {}).await?
-            );
-
-            Ok::<()>(())
-        })?;
+        let (mut controller, _screen_cap) = controller(Platform::MuMu)?;
+        info!("{:?}", controller.execute(Command::TestScreenShotDelay {}));
 
         Ok(())
     }
 
     use image::imageops::{self, flip_vertical};
 
-    #[tokio::test]
-    async fn test_capture_screen() -> Result<()> {
-        let mut controller = controller(Platform::MuMu)?;
+    #[test]
+    fn test_capture_screen() -> Result<()> {
+        mtas_logger::init_logger!(std::io::stdout());
 
-        println!(
-            "{:?}",
-            controller
-                .execute(Command::ControlScreenCapture { start: true })
-                .await?
-        );
+        let (mut controller, mut screen_cap) = controller(Platform::MuMu)?;
 
-        sleep(Duration::from_millis(500)).await; // wait for auto screen_cap finished
+        info!("{:?}", controller.execute(Command::TestScreenShotDelay {}));
 
-        let img = controller.get_screen();
+        sleep(Duration::from_millis(500));
+
+        let img = screen_cap.get_screen();
 
         let img = flip_vertical(&img);
 
@@ -201,33 +139,60 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn test_vedio_show() -> Result<()> {
-        let mut controller = controller(Platform::MuMu)?;
+    #[test]
+    fn test_vedio_speed() -> Result<()> {
+        mtas_logger::init_logger!(std::io::stdout());
 
-        println!(
-            "{:?}",
-            controller
-                .execute(Command::ControlScreenCapture { start: true })
-                .await?
-        );
+        let (mut controller, mut screen_cap) = controller(Platform::MuMu)?;
 
-        let width = controller.screen_capture.width;
-        let height = controller.screen_capture.height;
+        info!("{:?}", controller.execute(Command::TestScreenShotDelay {}));
 
-        let mut window =
-            Window::new("vedio", width, height, WindowOptions::default()).expect("WTF");
+        let mut times = Vec::with_capacity(10);
 
-        window.set_target_fps(120);
+        for _ in 0..10 {
+            let start = Instant::now();
+            'innerloop: loop {
+                if screen_cap.capture.update() {
+                    times.push(start.elapsed());
+                    break 'innerloop;
+                }
+            }
+        }
 
-        block_in_place(|| {
+        times.sort();
+        let trimmed = &times[1..(10 - 1)]; // Drop min & max (basic outlier trimming).
+        let total: Duration = trimmed.iter().sum();
+        let ave = total / trimmed.len() as u32;
+
+        info!("Average capture time: {:?}", ave);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_vedio_show() -> Result<()> {
+        mtas_logger::init_logger!(std::io::stdout());
+
+        let (mut controller, mut screen_cap) = controller(Platform::MuMu)?;
+
+        info!("{:?}", controller.execute(Command::TestScreenShotDelay {}));
+
+        let width = screen_cap.width;
+        let height = screen_cap.height;
+
+        spawn(move || {
+            let mut window =
+                Window::new("vedio", width, height, WindowOptions::default()).expect("WTF");
+
+            window.set_target_fps(120);
+
             while window.is_open() && !window.is_key_down(Key::Escape) {
-                let buffer_u8 = controller.screen_capture.capture.read();
+                let buffer_u8 = screen_cap.capture.read();
 
                 let buffer_u32_slice = bytemuck::cast_slice::<u8, u32>(&buffer_u8);
 
                 if buffer_u32_slice.len() != width * height {
-                    println!(
+                    info!(
                         "Warning: Buffer length mismatch. Expected: {}, Got: {}. Skipping frame.",
                         width * height,
                         buffer_u32_slice.len()
@@ -239,14 +204,18 @@ mod tests {
                     .update_with_buffer(&buffer_u32_slice, width, height)
                     .unwrap();
             }
-        });
+        })
+        .join()
+        .map_err(|e| anyhow!("video thread panicked: {:?}", e))?;
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_command_sequence_performance() -> Result<()> {
-        let mut controller = controller(Platform::MuMu)?;
+    #[test]
+    fn test_command_sequence_performance() -> Result<()> {
+        mtas_logger::init_logger!(std::io::stdout());
+
+        let (mut controller, _screen_cap) = controller(Platform::MuMu)?;
 
         let commands = vec![
             Command::Scroll {
@@ -273,28 +242,24 @@ mod tests {
         ];
 
         // --- 1. Benchmark without screen capture ---
-        controller
-            .execute(Command::ControlScreenCapture { start: false })
-            .await?;
-        sleep(Duration::from_millis(100)).await;
+        controller.execute(Command::ControlScreenCapture { start: false })?;
+        sleep(Duration::from_millis(100));
 
         let start_no_capture = Instant::now();
         for cmd in &commands {
-            controller.execute(cmd.clone()).await?;
+            controller.execute(cmd.clone())?;
         }
         let duration_no_capture = start_no_capture.elapsed();
         println!("\n--- Performance Test Results ---");
         println!("Without screen capture: {:?}", duration_no_capture);
 
         // --- 2. Benchmark with screen capture ---
-        controller
-            .execute(Command::ControlScreenCapture { start: true })
-            .await?;
-        sleep(Duration::from_millis(100)).await;
+        controller.execute(Command::ControlScreenCapture { start: true })?;
+        sleep(Duration::from_millis(100));
 
         let start_with_capture = Instant::now();
         for cmd in &commands {
-            controller.execute(cmd.clone()).await?;
+            controller.execute(cmd.clone())?;
         }
         let duration_with_capture = start_with_capture.elapsed();
         println!("With screen capture:    {:?}", duration_with_capture);
